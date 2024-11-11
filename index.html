@@ -1,1 +1,247 @@
-hi
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📡</title>
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📺</text></svg>">
+
+  <link rel="stylesheet" href="style.css">
+  <script src="clock.js"></script>
+</head>
+
+<body>
+  <div id="player"></div>
+  <div id="dark"></div>
+  <div id="click-catcher"></div>
+
+  <div id="channels">
+    <div class="channel">
+      <img src="logos/BTV.png" />
+    </div>
+  </div>
+
+  <div id="speech-recognition" style="position: absolute; display: none;">
+    <button id="startButton">Start</button>
+    <div id="output" style="color: white">...</div>
+  </div>
+
+  <script>
+
+    // todo
+    // - Selon la playlist aller à la vidéo suivante ou une vidéo aléatoire
+    // - Selon la playlist reprendre là ou en en était ou pas (tv live)
+    // - Gérer les vidéos qui n'existent plus -> génère une erreur
+
+    let lastPlaylistData = JSON.parse(localStorage.getItem('lastPlaylistData')) || {};
+    // Function to save the last viewed video id and current time for a playlist to session storage
+    function saveCurrentPlaylistDataToLocalStorage() {
+
+      lastPlaylistData[player.getPlaylistId()] = {
+        videoId: player.getVideoData().video_id,
+        videoIndex: player.getPlaylistIndex(),
+        currentTime: player.getCurrentTime()
+      };
+
+      localStorage.setItem('lastPlaylistData', JSON.stringify(lastPlaylistData));
+    }
+    // Function to get the last viewed video id and current time for a playlist
+    function getLastPlaylistData(playlist) {
+      return lastPlaylistData[playlist] || {videoId: '', videoIndex: 0, currentTime: 0};
+    }
+
+
+    // Load the YouTube IFrame Player API code asynchronously.
+    var tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    var firstScriptTag = document.getElementsByTagName('script')[0];
+    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    tag.onError = onError;
+
+    var playlists = [
+      //{id: 'PLJk4PP_cLUVQ29v7o1hI6w0FFjRaLGt40', logo: 'MovieTV.png'}, //  peplum
+      {id: 'PLy1pnOysMn9LkcL89omeqd79FH7K3zitw', logo: 'newsTV.png'}, // 1 news
+      {id: 'PLmNJItE2MCubz0ibr5tB07Hp4NCZWztWL', logo: 'dunkTV.png'}, // 2 basket
+      {id: 'PLI-KORiB_eLzez0JL6CR_XadP-Nm8XfJA', logo: 'DisneyTV.png'}, // 3 disney
+      {id: 'PL0dRZjWdHde0R7UQLzNo64bHaFtvmw4wC', logo: 'Making of TV.png'}, // 4 making of
+      {id: 'PLg6bQuWdqr_YpnEkOrJdh3ZVSiY6suben', logo: 'BTV.png'}, // 5 billiard
+      {id: 'PLy1pnOysMn9JrrVsp1kk6RHK_UHxQKAJi', logo: 'BTV.png'}, // 6 wake up
+    ];
+
+    // This function creates an <iframe> (and YouTube player)
+    // after the API code downloads.
+    var player;
+
+    function onYouTubeIframeAPIReady() {
+      console.info('onYouTubeIframeAPIReady')
+      player = new YT.Player('player', {
+        height: '300',
+        width: '400',
+        videoId: '5mGuCdlCcNM',
+        playerVars: {
+
+          'autoplay': 1, // Autoplay the video
+          'controls': 1, // Show player controls
+          'loop': 1, // Enable loop
+          'modestbranding': 1,
+
+          'color': 'white',
+          'iv_load_policy': 3,
+          'rel': 0
+        },
+        events: {
+          'onReady': onPlayerReady,
+          'onStateChange': onPlayerStateChange,
+          'onError': onError
+        }
+      });
+    }
+
+    // Function to handle errors when loading the YouTube API
+    function onError(event) {
+      console.log('Error loading the YouTube API', event);
+    }
+
+    // The API will call this function when the video player is ready.
+    function onPlayerReady(event) {
+      console.info('onPlayerReady', event)
+      event.target.playVideo();
+      event.target.setPlaybackQuality('hd1080');
+      document.body.focus();
+/*
+      setInterval(() => {
+        saveCurrentPlaylistDataToLocalStorage();
+      }, 1000)
+*/
+      startChannelsSelectorListening()
+    }
+
+    function onPlayerStateChange(event) {
+      console.info('onPlayerStateChange', event)
+
+      if (event.data == YT.PlayerState.ENDED) player.playVideo(); // When the video ends, play the next video
+
+      if (event.data == YT.PlayerState.BUFFERING) player.setPlaybackQuality('hd1080');
+
+      document.body.focus();
+    }
+
+    document.addEventListener('keydown', function (event) {
+      console.info(event.key)
+      var k = event.key
+      var volumeInc = player.getVolume() <= 10 ? 1 : 5;
+
+      if (k === 'AudioVolumeUp')       player.setVolume(player.getVolume() + volumeInc);
+      if (k === 'AudioVolumeDown')     player.setVolume(player.getVolume() - volumeInc);
+      if (k === 'ArrowRight')          player.seekTo(player.getCurrentTime() + 15, true);
+      if (k === 'ArrowLeft')           player.seekTo(player.getCurrentTime() - 15, true);
+      if (k === 'MediaTrackNext')      player.nextVideo(); // todo : boucler
+      if (k === 'MediaTrackPrevious')  player.previousVideo(); // todo : boucler
+      if (k === 'MediaPlayPause') {
+        if (player.getPlayerState() === 2) player.playVideo();
+        else player.pauseVideo();
+      }
+    });
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key !== 'PageUp' && event.key !== 'PageDown') return;
+
+      var darkDiv = document.getElementById('dark');
+      var currentOpacity = parseFloat(window.getComputedStyle(darkDiv).getPropertyValue('opacity'));
+      var newOpacity = currentOpacity + (event.key === 'PageUp' ? -0.05 : 0.05);
+      darkDiv.style.opacity = newOpacity > 1 ? 1 : newOpacity < 0 ? 0 : newOpacity;
+
+    });
+
+    document.addEventListener('keydown', function (event) {
+
+      // 0 to 9
+      var index = ['à', '&', 'é', '"', "'", '(', '-', 'è', '_', 'ç'].indexOf(event.key)
+
+      playPlaylistIndex(index)
+
+    });
+
+    function playPlaylistIndex(index) {
+
+      if (index <= 0 || index >= playlists.length + 1) return;
+
+      channelsSelectorTimer = 2000
+
+      console.info("playlist index to play", index)
+
+      saveCurrentPlaylistDataToLocalStorage();
+
+      var playlistToLoad = playlists[index - 1];
+      // Get the last viewed video id and current time for the selected playlist
+      var lastPlaylistData = getLastPlaylistData(playlistToLoad.id);
+      var lastVideoId = lastPlaylistData.videoId;
+      var lastVideoIndex = lastPlaylistData.videoIndex || 0;
+      var currentTime = lastPlaylistData.currentTime;
+
+      var loadPlaylistParams = {
+        listType: 'playlist',
+        list: playlistToLoad.id,
+        index: lastVideoIndex,
+        startSeconds: currentTime
+      }
+      console.info(loadPlaylistParams)
+      player.stopVideo()
+      setTimeout(() => {
+        player.loadPlaylist(loadPlaylistParams);
+      }, 1000)
+
+
+      document.body.focus();
+    }
+
+    var channelsSelector = document.getElementById('channels');
+    var channelsSelectorTimer = 3000
+
+    function startChannelsSelectorListening() {
+      setInterval(() => {
+
+        channels.classList.toggle('visible', channelsSelectorTimer > 0);
+
+        document.querySelectorAll('#channels .channel').forEach(channel => {
+          channel.classList.toggle(
+            'current', 
+            channel.classList.contains(player.getPlaylistId())
+          );
+        });
+
+        channelsSelectorTimer -= 100
+      }, 100)
+    }
+    
+    
+    createChannelsSelector()
+
+    function createChannelsSelector() {
+      var firstChannel = channelsSelector.querySelector('.channel');
+
+      // Remove the initial channel from the DOM but keep a reference to clone later
+      channelsSelector.removeChild(firstChannel);
+
+      playlists.forEach(function (playlist) {
+        // Clone the first channel element
+        var newChannel = firstChannel.cloneNode(true);
+
+        newChannel.classList.add(playlist.id)
+        // Update the src attribute of the img tag
+        var imgTag = newChannel.querySelector('img');
+        imgTag.src = 'logos/' + playlist.logo;
+
+        // Append the new channel to the container
+          channelsSelector.appendChild(newChannel);
+      });
+    }
+
+
+  </script>
+
+</body>
+
+</html>

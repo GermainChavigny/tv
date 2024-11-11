@@ -1,0 +1,76 @@
+body {
+  font-family: sans-serif;
+  margin: 0;
+  background-color: #000;
+  overflow: hidden;
+}
+
+#dark {
+  background-color: #000;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  left: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+  opacity: 0;
+}
+
+#click-catcher {
+  background-color: red;
+  position: absolute;
+  top: 10%;
+  bottom: 20%;
+  right: 0;
+  left: 0;
+  opacity: 0;
+}
+
+#player {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+}
+
+
+
+#channels {
+  position: absolute;
+  display: flex;
+  width: 65%;
+  flex-wrap: wrap;
+  background-color: black;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(1);
+  transition: all 0.2s;
+  opacity: 1;
+}
+
+#channels:not(.visible) {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.95);
+}
+
+#channels .channel {
+  position: relative;
+  flex-grow: 1;
+  max-width: 33%;
+}
+
+#channels .channel img {
+  width: calc(100% - 20px);
+  display: block;
+  border: 5px solid #363636;
+  margin: 5px;
+  transition: all 0.2s;
+}
+#channels .channel.current {
+  z-index: 10;
+}
+
+#channels .channel.current img {
+  border-color: white;
+  transform: scale(1.1);
+}
