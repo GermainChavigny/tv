@@ -37,6 +37,8 @@
     // - Gérer les vidéos qui n'existent plus -> génère une erreur
 
     let lastPlaylistData = JSON.parse(localStorage.getItem('lastPlaylistData')) || {};
+    let darkDivOpacity = 0;
+
     // Function to save the last viewed video id and current time for a playlist to session storage
     function saveCurrentPlaylistDataToLocalStorage() {
 
@@ -140,21 +142,32 @@
       if (k === 'ArrowLeft')           player.seekTo(player.getCurrentTime() - 15, true);
       if (k === 'MediaTrackNext')      player.nextVideo(); // todo : boucler
       if (k === 'MediaTrackPrevious')  player.previousVideo(); // todo : boucler
-      if (k === 'MediaPlayPause') {
-        if (player.getPlayerState() === 2) player.playVideo();
-        else player.pauseVideo();
+      if (k === 'MediaPlayPause' || k ==="p") {
+        if (player.getPlayerState() === 2) {
+          player.playVideo();
+          document.documentElement.requestFullscreen();
+          setDarkDivOpacity(darkDivOpacity);
+        } else {
+          player.pauseVideo();
+          setDarkDivOpacity(1);
+        }
       }
     });
 
     document.addEventListener('keydown', function (event) {
       if (event.key !== 'PageUp' && event.key !== 'PageDown') return;
 
-      var darkDiv = document.getElementById('dark');
-      var currentOpacity = parseFloat(window.getComputedStyle(darkDiv).getPropertyValue('opacity'));
-      var newOpacity = currentOpacity + (event.key === 'PageUp' ? -0.05 : 0.05);
-      darkDiv.style.opacity = newOpacity > 1 ? 1 : newOpacity < 0 ? 0 : newOpacity;
-
+      //var darkDiv = document.getElementById('dark');
+      //var currentOpacity = parseFloat(window.getComputedStyle(darkDiv).getPropertyValue('opacity'));
+      darkDivOpacity += (event.key === 'PageUp' ? -0.05 : 0.05);
+      darkDivOpacity = darkDivOpacity > 1 ? 1 : darkDivOpacity < 0 ? 0 : darkDivOpacity
+      setDarkDivOpacity(darkDivOpacity);
+      
     });
+
+    function setDarkDivOpacity(newOpacity) {
+      document.getElementById('dark').style.opacity = newOpacity;
+    }
 
     document.addEventListener('keydown', function (event) {
 
