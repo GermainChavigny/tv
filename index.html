@@ -70,7 +70,8 @@
       {id: 'PLI-KORiB_eLzez0JL6CR_XadP-Nm8XfJA', logo: 'DisneyTV.png'}, // 3 disney
       {id: 'PL0dRZjWdHde0R7UQLzNo64bHaFtvmw4wC', logo: 'Making of TV.png'}, // 4 making of
       {id: 'PLg6bQuWdqr_YpnEkOrJdh3ZVSiY6suben', logo: 'BTV.png'}, // 5 billiard
-      {id: 'PLy1pnOysMn9JrrVsp1kk6RHK_UHxQKAJi', logo: 'BTV.png'}, // 6 wake up
+      {id: 'PLy1pnOysMn9JrrVsp1kk6RHK_UHxQKAJi', logo: 'WakeUpTV.png'}, // 6 wake up
+      {id: 'PLy1pnOysMn9JVLeoL1QrV4aSEdujD4ESV', logo: 'SleepTV.jpg'}, // 7 sleep
     ];
 
     // This function creates an <iframe> (and YouTube player)
@@ -146,10 +147,10 @@
         if (player.getPlayerState() === 2) {
           player.playVideo();
           document.documentElement.requestFullscreen();
-          setDarkDivOpacity(darkDivOpacity);
+          //setDarkDivOpacity(darkDivOpacity);
         } else {
           player.pauseVideo();
-          setDarkDivOpacity(1);
+          //setDarkDivOpacity(1);
         }
       }
     });
