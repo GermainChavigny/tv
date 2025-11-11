@@ -6,6 +6,16 @@ if (!localStorage.getItem("alarmEnabled")) localStorage.setItem("alarmEnabled", 
 
 // SpeechSynthesis setup
 let synth = window.speechSynthesis;
+//delay voice loading
+let haveVoices = false;
+
+setTimeout(() => {
+    //haveVoices = synth.getVoices().length > 0;
+    console.log("Voices available:", haveVoices);
+}, 1000);
+
+
+const audio = new Audio();
 
 // Function to format time into "HH:MM" string
 function formatTime(hour, minute) {
@@ -14,16 +24,44 @@ function formatTime(hour, minute) {
 
 
 function announce(str) {
+    
     if (synth.speaking) synth.cancel();  // Cancel current speech if speaking
 
     const speech = new SpeechSynthesisUtterance(str);
     speech.voice = synth.getVoices().find(voice => voice.name === 'Google français');
     speech.volume = player.getVolume() / 100;
-    synth.speak(speech);
+    if (haveVoices) return synth.speak(speech);
+
+    //fallback if no voices
+    audio.src = `audio/${str}.mp3`;
+    audio.volume = player.getVolume() / 100;
+    audio.play();
 }
 
 function announceTime(hour, minute) {
-    announce(`${hour}:${minute < 10 ? '0' + minute : minute}`);
+
+    if (haveVoices) return announce(`${hour}:${minute < 10 ? '0' + minute : minute}`);
+
+    //fallback if no voices
+    // play wav files
+    let files = [];
+    files.push(`audio/numbers/${hour}.wav`);
+    files.push(`audio/numbers/${minute}.wav`);
+
+    playAudioFilesSequentially(files);
+}
+
+function playAudioFilesSequentially(files) {
+    if (files.length === 0) return;
+    
+    
+    audio.src = files[0];
+    audio.volume = player.getVolume() / 100;
+    audio.play();
+    
+    audio.onended = function() {
+        playAudioFilesSequentially(files.slice(1));
+    };
 }
 
 // Function to check the current time
