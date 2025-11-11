@@ -10,7 +10,7 @@ let synth = window.speechSynthesis;
 let haveVoices = false;
 
 setTimeout(() => {
-    //haveVoices = synth.getVoices().length > 0;
+    haveVoices = synth.getVoices().length > 0;
     console.log("Voices available:", haveVoices);
 }, 1000);
 
