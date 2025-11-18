@@ -70,6 +70,7 @@
       {id: 'PLI-KORiB_eLzez0JL6CR_XadP-Nm8XfJA', logo: 'DisneyTV.png'}, // 3 disney
       {id: 'PL0dRZjWdHde0R7UQLzNo64bHaFtvmw4wC', logo: 'Making of TV.png'}, // 4 making of
       {id: 'PLg6bQuWdqr_YpnEkOrJdh3ZVSiY6suben', logo: 'BTV.png'}, // 5 billiard
+
       {id: 'PLy1pnOysMn9JrrVsp1kk6RHK_UHxQKAJi', logo: 'WakeUpTV.png'}, // 6 wake up
       {id: 'PLy1pnOysMn9JVLeoL1QrV4aSEdujD4ESV', logo: 'SleepTV.jpg'}, // 7 sleep
     ];
@@ -83,7 +84,7 @@
       player = new YT.Player('player', {
         height: '300',
         width: '400',
-        videoId: '5mGuCdlCcNM',
+        videoId: '3zyOHgkEaO8', // 5mGuCdlCcNM
         playerVars: {
 
           'autoplay': 1, // Autoplay the video
@@ -112,7 +113,7 @@
     function onPlayerReady(event) {
       console.info('onPlayerReady', event)
       event.target.playVideo();
-      event.target.setPlaybackQuality('hd1080');
+      event.target.setPlaybackQuality('hd720');
       document.body.focus();
 /*
       setInterval(() => {
@@ -127,7 +128,7 @@
 
       if (event.data == YT.PlayerState.ENDED) player.playVideo(); // When the video ends, play the next video
 
-      if (event.data == YT.PlayerState.BUFFERING) player.setPlaybackQuality('hd1080');
+      if (event.data == YT.PlayerState.BUFFERING) player.setPlaybackQuality('hd720');
 
       document.body.focus();
     }
@@ -136,7 +137,13 @@
       console.info(event.key)
       var k = event.key
       var volumeInc = player.getVolume() <= 10 ? 1 : 5;
-
+      if (k === 'AudioVolumeMute' || k === 'a')     {
+        /* todo: pauser la vidéo et appeler l'api rest de la prise pour éteindre la TV */
+        player.pauseVideo();
+        fetch("http://192.168.1.19/rpc/Switch.Set?id=0&on=true")
+        .then(r => r.json())
+        .then(console.log);
+      }
       if (k === 'AudioVolumeUp')       player.setVolume(player.getVolume() + volumeInc);
       if (k === 'AudioVolumeDown')     player.setVolume(player.getVolume() - volumeInc);
       if (k === 'ArrowRight')          player.seekTo(player.getCurrentTime() + 15, true);
@@ -147,10 +154,8 @@
         if (player.getPlayerState() === 2) {
           player.playVideo();
           document.documentElement.requestFullscreen();
-          //setDarkDivOpacity(darkDivOpacity);
         } else {
           player.pauseVideo();
-          //setDarkDivOpacity(1);
         }
       }
     });
