@@ -138,11 +138,8 @@
       var k = event.key
       var volumeInc = player.getVolume() <= 10 ? 1 : 5;
       if (k === 'AudioVolumeMute' || k === 'a')     {
-        /* todo: pauser la vidéo et appeler l'api rest de la prise pour éteindre la TV */
         player.pauseVideo();
-        fetch("http://192.168.1.19/rpc/Switch.Set?id=0&on=false")
-        .then(r => r.json())
-        .then(console.log);
+        setTvPower(false);
       }
       if (k === 'AudioVolumeUp')       player.setVolume(player.getVolume() + volumeInc);
       if (k === 'AudioVolumeDown')     player.setVolume(player.getVolume() - volumeInc);
@@ -154,6 +151,7 @@
         if (player.getPlayerState() === 2) {
           player.playVideo();
           document.documentElement.requestFullscreen();
+          setTvPower(true);
         } else {
           player.pauseVideo();
         }
@@ -185,6 +183,8 @@
     });
 
     function playPlaylistIndex(index) {
+
+      setTvPower(true);
 
       if (index <= 0 || index >= playlists.length + 1) return;
 
@@ -259,6 +259,17 @@
       });
     }
 
+    function setTvPower(on) {
+      // pause video when switching off
+      if (!on && player && typeof player.pauseVideo === 'function') {
+        player.pauseVideo();
+      }
+
+      fetch(`http://192.168.1.19/rpc/Switch.Set?id=0&on=${on}`)
+        .then(r => r.json())
+        .then(console.log)
+        .catch(err => console.warn('setTvPower error', err));
+    }
 
   </script>
 
