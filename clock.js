@@ -77,7 +77,7 @@ function checkTime() {
     //console.info(currentHour, alarmHour, currentMinute, alarmMinute, localStorage.getItem("alarmEnabled"))
 
     if (currentHour === alarmHour && currentMinute === alarmMinute && localStorage.getItem("alarmEnabled") === "true") {
-        //if (true) {
+        setTvPower(true);
         playPlaylistIndex(6)
     }
 

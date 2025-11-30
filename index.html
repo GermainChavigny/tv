@@ -184,8 +184,6 @@
 
     function playPlaylistIndex(index) {
 
-      setTvPower(true);
-
       if (index <= 0 || index >= playlists.length + 1) return;
 
       channelsSelectorTimer = 2000
@@ -260,11 +258,7 @@
     }
 
     function setTvPower(on) {
-      // pause video when switching off
-      if (!on && player && typeof player.pauseVideo === 'function') {
-        player.pauseVideo();
-      }
-
+      
       fetch(`http://192.168.1.19/rpc/Switch.Set?id=0&on=${on}`)
         .then(r => r.json())
         .then(console.log)
