@@ -140,7 +140,7 @@
       if (k === 'AudioVolumeMute' || k === 'a')     {
         /* todo: pauser la vidéo et appeler l'api rest de la prise pour éteindre la TV */
         player.pauseVideo();
-        fetch("http://192.168.1.19/rpc/Switch.Set?id=0&on=true")
+        fetch("http://192.168.1.19/rpc/Switch.Set?id=0&on=false")
         .then(r => r.json())
         .then(console.log);
       }
