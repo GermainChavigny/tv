@@ -57,6 +57,23 @@
       return lastPlaylistData[playlist] || {videoId: '', videoIndex: 0, currentTime: 0};
     }
 
+    let cursorHideTimeout;
+
+    function hideCursor() {
+      document.body.style.cursor = 'none';
+    }
+
+    function showCursor() {
+      document.body.style.cursor = 'auto';
+      clearTimeout(cursorHideTimeout);
+      cursorHideTimeout = setTimeout(hideCursor, 3000);
+    }
+
+    document.addEventListener('mousemove', showCursor);
+    document.addEventListener('mousedown', showCursor);
+
+    // Initialize cursor hide on page load
+    showCursor();
 
     // Load the YouTube IFrame Player API code asynchronously.
     var tag = document.createElement('script');
