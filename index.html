@@ -15,6 +15,7 @@
 
 <body>
   <div id="player"></div>
+  
   <div id="dark"></div>
   <div id="click-catcher"></div>
 
@@ -23,6 +24,8 @@
       <img src="logos/BTV.png" draggable="false" />
     </div>
   </div>
+
+  <video id="movie-player" style="position: absolute; width: 100%; height: 100%; display: none;"></video>
 
   <div id="speech-recognition" style="position: absolute; display: none;">
     <button id="startButton">Start</button>
@@ -37,10 +40,19 @@
     // - Gérer les vidéos qui n'existent plus -> génère une erreur
 
     let lastPlaylistData = JSON.parse(localStorage.getItem('lastPlaylistData')) || {};
+    let lastMovieData = {}; // Stockage de la progression des films
     let saveInterval = null; // Pour stocker le timer de sauvegarde
     let darkDivOpacity = 0;
+    let isLocalMovieMode = false; // Flag pour le mode film local
+    let currentMovie = null; // Fichier film actuellement en lecture
+    
+    // List of local movies (default fallback)
+    var movies = [
+      'file_example_MP4_480_1_5MG.mp4'
+    ];
     
     function initData() {
+      // Charger les données YouTube
       fetch('http://localhost:5000/load')
           .then(response => response.json())
           .then(data => {
@@ -48,6 +60,26 @@
               lastPlaylistData = data;
           })
           .catch(err => console.error("Erreur chargement:", err));
+      
+      // Charger les données des films
+      fetch('http://localhost:5000/movies-progress')
+          .then(response => response.json())
+          .then(data => {
+              console.log("Progression films chargée du serveur:", data);
+              lastMovieData = data;
+          })
+          .catch(err => console.error("Erreur chargement films:", err));
+      
+      // Charger la liste des fichiers films disponibles
+      fetch('http://localhost:5000/movies-list')
+          .then(response => response.json())
+          .then(data => {
+              if (data && data.length > 0) {
+                  console.log("Liste des films chargée:", data);
+                  movies = data;
+              }
+          })
+          .catch(err => console.error("Erreur chargement liste films:", err));
     }
 
     initData();
@@ -71,9 +103,31 @@
         }).catch(err => console.warn("Erreur sauvegarde:", err));
     }
 
+    // Function to save the current movie progress
+    function saveMovieProgress() {
+        if (!currentMovie) return;
+
+        // 1. Mise à jour de la variable JS
+        lastMovieData[currentMovie] = {
+            currentTime: moviePlayer.currentTime
+        };
+
+        // 2. Envoi au serveur Python (API)
+        fetch('http://localhost:5000/movies-progress', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(lastMovieData)
+        }).catch(err => console.warn("Erreur sauvegarde film:", err));
+    }
+
     // Function to get the last viewed video id and current time for a playlist
     function getLastPlaylistData(playlist) {
       return lastPlaylistData[playlist] || {videoId: '', videoIndex: 0, currentTime: 0};
+    }
+
+    // Function to get the last movie progress
+    function getLastMovieData(filename) {
+      return lastMovieData[filename] || {currentTime: 0};
     }
 
     let cursorHideTimeout;
@@ -111,11 +165,37 @@
 
       {id: 'PLy1pnOysMn9JrrVsp1kk6RHK_UHxQKAJi', logo: 'WakeUpTV.png'}, // 6 wake up
       {id: 'PLy1pnOysMn9JVLeoL1QrV4aSEdujD4ESV', logo: 'SleepTV.jpg'}, // 7 sleep
+      {id: 'PLy1pnOysMn9JVLeoL1QrV4aSEdujD4ESV', logo: 'SleepTV.jpg'}, // 8 sleep
+      {id: 'PLy1pnOysMn9JVLeoL1QrV4aSEdujD4ESV', logo: 'SleepTV.jpg'}, // 9 local movies
     ];
 
     // This function creates an <iframe> (and YouTube player)
     // after the API code downloads.
     var player;
+
+    function disableYouTubeControls() {
+      // Disable YouTube player keyboard shortcuts when in movie mode
+      if (player && typeof player.setOption === 'function') {
+        player.setOption('controls', 0); // Hide controls
+      }
+      // Remove focus from YouTube iframe to prevent it from intercepting keys
+      var iframe = document.querySelector('iframe');
+      if (iframe) {
+        iframe.style.pointerEvents = 'none';
+      }
+    }
+
+    function enableYouTubeControls() {
+      // Re-enable YouTube player controls when back in YouTube mode
+      if (player && typeof player.setOption === 'function') {
+        player.setOption('controls', 1); // Show controls
+      }
+      // Re-enable YouTube iframe interaction
+      var iframe = document.querySelector('iframe');
+      if (iframe) {
+        iframe.style.pointerEvents = 'auto';
+      }
+    }
 
     function onYouTubeIframeAPIReady() {
       console.info('onYouTubeIframeAPIReady')
@@ -159,6 +239,15 @@
     function onPlayerStateChange(event) {
       console.info('onPlayerStateChange', event)
 
+      // Ignore YouTube player state changes when in local movie mode
+      if (isLocalMovieMode) {
+        // Force YouTube to stay paused when in movie mode
+        if (player && typeof player.pauseVideo === 'function') {
+          player.pauseVideo();
+        }
+        return;
+      }
+
       if (event.data == YT.PlayerState.PLAYING) {
         if (!saveInterval) saveInterval = setInterval(saveCurrentPlaylistDataToLocalStorage, 2500);
       } else {
@@ -179,23 +268,93 @@
       console.info(event.key)
       var k = event.key
       var volumeInc = player.getVolume() <= 10 ? 1 : 5;
-      if (k === 'AudioVolumeMute' || k === 'a')     {
-        player.pauseVideo();
-        setTvPower(false);
-      }
-      if (k === 'AudioVolumeUp')       player.setVolume(player.getVolume() + volumeInc);
-      if (k === 'AudioVolumeDown')     player.setVolume(player.getVolume() - volumeInc);
-      if (k === 'ArrowRight')          player.seekTo(player.getCurrentTime() + 15, true);
-      if (k === 'ArrowLeft')           player.seekTo(player.getCurrentTime() - 15, true);
-      if (k === 'MediaTrackNext')      player.nextVideo(); // todo : boucler
-      if (k === 'MediaTrackPrevious')  player.previousVideo(); // todo : boucler
-      if (k === 'MediaPlayPause' || k ==="p") {
-        if (player.getPlayerState() === 2) {
-          player.playVideo();
-          document.documentElement.requestFullscreen();
-          setTvPower(true);
+      
+      if (k === 'AudioVolumeMute' || k === 'a') {
+        if (isLocalMovieMode) {
+          moviePlayer.pause();
         } else {
           player.pauseVideo();
+          setTvPower(false);
+        }
+      }
+      
+      if (k === 'AudioVolumeUp') {
+        if (isLocalMovieMode) {
+          var newVol = Math.min(100, moviePlayer.volume * 100 + volumeInc);
+          moviePlayer.volume = newVol / 100;
+        } else {
+          player.setVolume(player.getVolume() + volumeInc);
+        }
+      }
+      
+      if (k === 'AudioVolumeDown') {
+        if (isLocalMovieMode) {
+          var newVol = Math.max(0, moviePlayer.volume * 100 - volumeInc);
+          moviePlayer.volume = newVol / 100;
+        } else {
+          player.setVolume(player.getVolume() - volumeInc);
+        }
+      }
+      
+      if (k === 'ArrowRight') {
+        if (isLocalMovieMode) {
+          moviePlayer.currentTime += 15;
+        } else {
+          player.seekTo(player.getCurrentTime() + 15, true);
+        }
+      }
+      
+      if (k === 'ArrowLeft') {
+        if (isLocalMovieMode) {
+          moviePlayer.currentTime = Math.max(0, moviePlayer.currentTime - 15);
+        } else {
+          player.seekTo(player.getCurrentTime() - 15, true);
+        }
+      }
+      
+      if (k === 'MediaTrackNext') {
+        if (isLocalMovieMode) {
+          var currentIndex = movies.indexOf(currentMovie);
+          if (currentIndex < movies.length - 1) {
+            playMovieAtIndex(currentIndex + 1);
+          }
+        } else {
+          player.nextVideo();
+        }
+      }
+      
+      if (k === 'MediaTrackPrevious') {
+        if (isLocalMovieMode) {
+          var currentIndex = movies.indexOf(currentMovie);
+          if (currentIndex > 0) {
+            playMovieAtIndex(currentIndex - 1);
+          }
+        } else {
+          player.previousVideo();
+        }
+      }
+      
+      if (k === 'MediaPlayPause' || k === 'p') {
+        if (isLocalMovieMode) {
+          if (moviePlayer.paused) {
+            moviePlayer.play();
+            document.documentElement.requestFullscreen();
+            setTvPower(true);
+            // Ensure YouTube stays paused
+            if (player && typeof player.pauseVideo === 'function') {
+              player.pauseVideo();
+            }
+          } else {
+            moviePlayer.pause();
+          }
+        } else {
+          if (player.getPlayerState() === 2) {
+            player.playVideo();
+            document.documentElement.requestFullscreen();
+            setTvPower(true);
+          } else {
+            player.pauseVideo();
+          }
         }
       }
     });
@@ -220,6 +379,27 @@
       // 0 to 9
       var index = ['à', '&', 'é', '"', "'", '(', '-', 'è', '_', 'ç'].indexOf(event.key)
 
+      // Key 9 (ç) toggles local movie mode
+      if (index === 9) {
+        if (isLocalMovieMode) {
+          stopMovieMode(); // Return to YouTube
+        } else {
+          isLocalMovieMode = true;
+          player.pauseVideo(); // Pause YouTube before switching
+          playMovieAtIndex(0); // Load first movie
+        }
+        return;
+      }
+
+      // Keys 1-8 play YouTube playlists - also exit movie mode if active
+      if (index > 0 && index <= playlists.length) {
+        if (isLocalMovieMode) {
+          isLocalMovieMode = false;
+          moviePlayer.pause();
+          moviePlayer.style.display = 'none';
+        }
+      }
+      
       playPlaylistIndex(index)
 
     });
@@ -277,6 +457,87 @@
 
         channelsSelectorTimer -= 100
       }, 100)
+    }
+
+    // --- MOVIE PLAYER FUNCTIONS ---
+    var moviePlayer = document.getElementById('movie-player');
+
+    // Auto-replay movie when it ends
+    moviePlayer.addEventListener('ended', function() {
+      if (isLocalMovieMode && currentMovie) {
+        moviePlayer.currentTime = 0;
+        moviePlayer.play();
+      }
+    });
+
+    function playMovieAtIndex(index) {
+      if (index < 0 || index >= movies.length) return;
+
+      var filename = movies[index];
+      console.info("Loading movie:", filename);
+
+      currentMovie = filename;
+      
+      if (saveInterval) {
+          clearInterval(saveInterval);
+          saveInterval = null;
+      }
+
+      // Disable YouTube player controls
+      disableYouTubeControls();
+      
+      // Force YouTube to pause immediately
+      if (player && typeof player.pauseVideo === 'function') {
+        player.pauseVideo();
+      }
+
+      // Get last playback position for this movie
+      var lastData = getLastMovieData(filename);
+      var lastTime = lastData.currentTime || 0;
+
+      // Set video source and load
+      moviePlayer.src = 'movies/' + filename;
+      moviePlayer.style.display = 'block';
+      moviePlayer.currentTime = lastTime;
+      moviePlayer.play();
+
+      // Start auto-save interval
+      saveInterval = setInterval(saveMovieProgress, 2500);
+      
+      // Keep YouTube paused while in movie mode
+      var keepYouTubePausedInterval = setInterval(function() {
+        if (!isLocalMovieMode) {
+          clearInterval(keepYouTubePausedInterval);
+          return;
+        }
+        if (player && typeof player.pauseVideo === 'function') {
+          player.pauseVideo();
+        }
+      }, 500);
+
+      document.body.focus();
+    }
+
+    function stopMovieMode() {
+      console.info("Switching back to YouTube mode");
+      isLocalMovieMode = false;
+      currentMovie = null;
+      moviePlayer.pause();
+      moviePlayer.style.display = 'none';
+      
+      if (saveInterval) {
+          clearInterval(saveInterval);
+          saveInterval = null;
+      }
+
+      // Save movie progress before switching
+      saveMovieProgress();
+      
+      // Re-enable YouTube player controls
+      enableYouTubeControls();
+      
+      player.playVideo();
+      document.body.focus();
     }
     
     
