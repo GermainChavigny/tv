@@ -20,7 +20,7 @@
 
   <div id="channels">
     <div class="channel">
-      <img src="logos/BTV.png" />
+      <img src="logos/BTV.png" draggable="false" />
     </div>
   </div>
 
@@ -37,21 +37,40 @@
     // - Gérer les vidéos qui n'existent plus -> génère une erreur
 
     let lastPlaylistData = JSON.parse(localStorage.getItem('lastPlaylistData')) || {};
+    let saveInterval = null; // Pour stocker le timer de sauvegarde
     let darkDivOpacity = 0;
+    
+    function initData() {
+      fetch('http://localhost:5000/load')
+          .then(response => response.json())
+          .then(data => {
+              console.log("Sauvegarde chargée du serveur:", data);
+              lastPlaylistData = data;
+          })
+          .catch(err => console.error("Erreur chargement:", err));
+    }
+
+    initData();
 
     // Function to save the last viewed video id and current time for a playlist to session storage
     function saveCurrentPlaylistDataToLocalStorage() {
+        // 1. Mise à jour de la variable JS
+        if (!player || !player.getPlaylistId()) return;
+        
+        lastPlaylistData[player.getPlaylistId()] = {
+            videoId: player.getVideoData().video_id,
+            videoIndex: player.getPlaylistIndex(),
+            currentTime: player.getCurrentTime()
+        };
 
-      if (!player || !player.getPlaylistId) return;
-      
-      lastPlaylistData[player.getPlaylistId()] = {
-        videoId: player.getVideoData().video_id,
-        videoIndex: player.getPlaylistIndex(),
-        currentTime: player.getCurrentTime()
-      };
-
-      localStorage.setItem('lastPlaylistData', JSON.stringify(lastPlaylistData));
+        // 2. Envoi au serveur Python (API)
+        fetch('http://localhost:5000/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(lastPlaylistData)
+        }).catch(err => console.warn("Erreur sauvegarde:", err));
     }
+
     // Function to get the last viewed video id and current time for a playlist
     function getLastPlaylistData(playlist) {
       return lastPlaylistData[playlist] || {videoId: '', videoIndex: 0, currentTime: 0};
@@ -134,12 +153,20 @@
       event.target.playVideo();
       event.target.setPlaybackQuality('hd720');
       document.body.focus();
-      setInterval(saveCurrentPlaylistDataToLocalStorage, 1000);
       startChannelsSelectorListening()
     }
 
     function onPlayerStateChange(event) {
       console.info('onPlayerStateChange', event)
+
+      if (event.data == YT.PlayerState.PLAYING) {
+        if (!saveInterval) saveInterval = setInterval(saveCurrentPlaylistDataToLocalStorage, 2500);
+      } else {
+        if (saveInterval) {
+            clearInterval(saveInterval);
+            saveInterval = null;
+        }
+      }
 
       if (event.data == YT.PlayerState.ENDED) player.playVideo(); // When the video ends, play the next video
 
@@ -205,7 +232,10 @@
 
       console.info("playlist index to play", index)
 
-      saveCurrentPlaylistDataToLocalStorage();
+      if (saveInterval) {
+          clearInterval(saveInterval);
+          saveInterval = null;
+      }
 
       var playlistToLoad = playlists[index - 1];
       // Get the last viewed video id and current time for the selected playlist
