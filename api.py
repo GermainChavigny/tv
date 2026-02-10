@@ -24,7 +24,9 @@ def get_save_path():
         return str(base_dir / 'progression.json'), str(base_dir / 'movies_progress.json'), str(base_dir / 'alarm.json')
     else:  # Linux/Debian
         # Production sur mini PC Debian
-        return "/home/tv/app_tv/progression.json", "/home/tv/app_tv/movies_progress.json", "/home/tv/app_tv/alarm.json"
+        data_dir = "/home/tv/app_tv/data"
+        os.makedirs(data_dir, exist_ok=True)
+        return f"{data_dir}/progression.json", f"{data_dir}/movies_progress.json", f"{data_dir}/alarm.json"
 
 # Ou utiliser les variables d'environnement si définies
 SAVE_FILE = os.getenv('TV_SAVE_FILE') or get_save_path()[0]
