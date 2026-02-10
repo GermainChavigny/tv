@@ -10,7 +10,6 @@ import config from '../config.js';
 export class KeyboardHandler extends EventEmitter {
   constructor() {
     super();
-    this.isLinux = this.detectEnvironment();
     this.setupKeyMapping();
   }
 
@@ -28,7 +27,7 @@ export class KeyboardHandler extends EventEmitter {
    * Setup keyboard mapping based on environment
    */
   setupKeyMapping() {
-    if (this.isLinux) {
+    if (config.os === 'linux') {
       this.setupLinuxMapping();
     } else {
       this.setupWindowsMapping();
