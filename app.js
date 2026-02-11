@@ -3,6 +3,7 @@
  * Initializes and orchestrates all modules
  */
 
+
 import config from './config.js';
 import state from './modules/StateManager.js';
 import { apiClient } from './modules/ApiClient.js';
