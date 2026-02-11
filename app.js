@@ -187,11 +187,10 @@ function attachKeyboardHandlers() {
 
   // Brightness
   kb.on('brightness', (direction) => {
-    const step = 0.05;
     if (direction === 'increase') {
-      state.decreaseBrightness(step);
+      state.increaseBrightness();
     } else {
-      state.increaseBrightness(step);
+      state.decreaseBrightness();
     }
   });
 

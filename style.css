@@ -12,6 +12,7 @@ body {
 #dark {
   background-color: #000;
   position: absolute;
+  z-index: 15;
   top: 0;
   bottom: 0;
   right: 0;

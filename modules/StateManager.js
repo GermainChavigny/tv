@@ -120,11 +120,25 @@ class StateManager extends EventEmitter {
     this.emit('brightnessChanged', this.brightness);
   }
 
-  increaseBrightness(step = 0.05) {
+  increaseBrightness() {
+    // Finer granularity when very dark (brightness close to 1) for precise control
+    let step = 0.05; // Default step
+    if (this.brightness > 0.8) {
+      step = 0.01; // Very fine control when very dark
+    } else if (this.brightness > 0.5) {
+      step = 0.02; // Fine control in dark-to-medium zones
+    }
     this.setBrightness(this.brightness + step);
   }
 
-  decreaseBrightness(step = 0.05) {
+  decreaseBrightness() {
+    // Finer granularity when very dark (brightness close to 1) for precise control
+    let step = 0.05; // Default step
+    if (this.brightness > 0.8) {
+      step = 0.01; // Very fine control when very dark
+    } else if (this.brightness > 0.5) {
+      step = 0.02; // Fine control in dark-to-medium zones
+    }
     this.setBrightness(this.brightness - step);
   }
 
