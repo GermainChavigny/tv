@@ -1,1 +1,16 @@
+# Données locales (progression, alarmes, etc.)
+# Stockées en dehors du dépôt git pour éviter les conflits
 data/
+
+# Configuration d'environnement local
+.env
+.env.local
+
+# Dépendances
+node_modules/
+__pycache__/
+*.pyc
+
+# Fichiers temporaires
+*.tmp
+.DS_Store
