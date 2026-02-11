@@ -93,6 +93,10 @@ export class KeyboardHandler extends EventEmitter {
     // Emit generic user-interaction event for all keys
     this.emit('user-interaction');
 
+    if (key !== this.powerOffKey) {
+      this.emit('none-power-off-interaction');
+    }
+
     // Playlist keys
     const playlistIndex = this.playlistKeys.indexOf(key);
     if (playlistIndex >= 0) {

@@ -88,6 +88,11 @@ function attachKeyboardHandlers() {
     app.alarmManager.stopProgressiveAlarm();
   });
 
+  // Turn on TV on any interaction except power-off
+  kb.on('none-power-off-interaction', () => {
+    app.tvPower.powerOn().catch(() => {});
+  });
+
   // Playlist selection
   kb.on('playlist', (index) => {
     console.log(`Selected playlist ${index}`);
@@ -137,7 +142,6 @@ function attachKeyboardHandlers() {
       if (state.moviePlayer.paused) {
         state.moviePlayer.play();
         document.documentElement.requestFullscreen().catch(() => {});
-        app.tvPower.powerOn().catch(() => {});
       } else {
         state.moviePlayer.pause();
       }
@@ -146,7 +150,6 @@ function attachKeyboardHandlers() {
       if (playerState === 2) { // PAUSED
         state.player.playVideo();
         document.documentElement.requestFullscreen().catch(() => {});
-        app.tvPower.powerOn().catch(() => {});
       } else {
         state.player.pauseVideo();
       }
