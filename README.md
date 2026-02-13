@@ -71,20 +71,36 @@ sudo systemctl start tv-app
 
 ## 🔧 Configuration
 
-### Gestion des Données
+### Gestion des Données et des Vidéos
 
-Les données (progression, alarmes, etc.) sont stockées dans un dossier **externe au dépôt git** (`../tv_data/`) pour éviter les conflits lors des mises à jour.
+Les données et vidéos sont stockées dans des **dossiers externes au dépôt git** pour éviter les conflits lors des mises à jour :
 
-Le dossier `tv_data` est créé automatiquement au démarrage du backend s'il n'existe pas. Aucune configuration d'environnement n'est requise.
+- `../tv_data/` : Progression, alarmes, état des films
+- `../movies/` : Fichiers vidéo (MP4)
+
+Ces dossiers sont créés automatiquement au démarrage du backend s'ils n'existent pas. Aucune configuration d'environnement n'est requise.
 
 **Structure:**
 ```
 tv/
-  tv_app/           # Dépôt git
-  tv_data/          # Données persistantes (hors git)
+  tv_app/               # Dépôt git
+    api.py              # Backend
+    config.js           # Config frontend
+    app.js              # App principal
+    modules/
+    audio/
+    case/
+    logos/
+    ...
+  
+  tv_data/              # Données (hors git)
     progression.json
     movies_progress.json
     alarm.json
+  
+  movies/               # Vidéos (hors git)
+    file_example_MP4_480_1_5MG.mp4
+    ...
 ```
 
 ### config.js
@@ -136,9 +152,14 @@ POST /movies-progress           # Sauvegarder position film
 ## 🚀 Déploiement
 
 1. Clone repo sur `/home/tv/app_tv/`
-2. Créer dossier de données: `mkdir -p ../tv_data` (au niveau parent du git)
-3. `pip install -r requirements.txt`
-4. Configurer IP prise Shelly dans `config.js`
-5. Créer service systemd (voir Setup Debian)
-6. Accéder via navigateur (http://mini-pc-ip:8000)
+2. Créer dossiers externes (au niveau parent du git):
+   ```bash
+   mkdir -p ../tv_data
+   mkdir -p ../movies
+   ```
+3. Placer les vidéos dans `../movies/` (fichiers `.mp4`)
+4. `pip install -r requirements.txt`
+5. Configurer IP prise Shelly dans `config.js`
+6. Créer service systemd (voir Setup Debian)
+7. Accéder via navigateur (http://mini-pc-ip:8000)
 

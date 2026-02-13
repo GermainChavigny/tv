@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import json
 import os
@@ -9,7 +9,7 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for all routes
 
 # ============ CONFIGURATION ============
-# Chemins unifiés vers le dossier tv_data créé en dehors du git (parent du dossier)
+# Chemins unifiés vers les dossiers créés en dehors du git (parent du dossier)
 
 # Créer le dossier tv_data en dehors du git si nécessaire
 def get_data_dir():
@@ -23,15 +23,26 @@ def get_data_dir():
     data_dir.mkdir(exist_ok=True)
     return str(data_dir)
 
+# Obtenir le dossier movies (également en dehors du git)
+def get_movies_dir():
+    """
+    Retourne le chemin du dossier movies créé en dehors du dossier du git.
+    Le dossier est situé dans le parent du dossier tv_app.
+    """
+    parent_dir = Path(__file__).parent.parent
+    movies_dir = parent_dir / 'movies'
+    movies_dir.mkdir(exist_ok=True)
+    return str(movies_dir)
+
 DATA_DIR = get_data_dir()
+MOVIES_DIR = get_movies_dir()
 SAVE_FILE = os.path.join(DATA_DIR, 'progression.json')
 MOVIES_SAVE_FILE = os.path.join(DATA_DIR, 'movies_progress.json')
 ALARM_FILE = os.path.join(DATA_DIR, 'alarm.json')
-MOVIES_DIR = os.path.join(os.path.dirname(__file__), 'movies')
 TV_CONTROL_URL = 'http://192.168.1.19/rpc/Switch.Set'
 
 print(f"[TV App] Data directory: {DATA_DIR}")
-print(f"[TV App] Save file: {SAVE_FILE}")
+print(f"[TV App] Movies directory: {MOVIES_DIR}")
 print(f"[TV App] TV Control URL: {TV_CONTROL_URL}")
 
 # ============ ENDPOINTS ============
@@ -109,6 +120,31 @@ def get_movies_list():
         return jsonify(files)
     except:
         return jsonify([])
+
+# --- SERVIR UN FICHIER VIDÉO ---
+@app.route('/get-movie/<filename>', methods=['GET'])
+def get_movie(filename):
+    """Serve a movie file from the movies directory"""
+    try:
+        # Security: ensure filename doesn't contain path traversal
+        if '..' in filename or '/' in filename or '\\' in filename:
+            return jsonify({"error": "Invalid filename"}), 400
+        
+        movie_path = Path(MOVIES_DIR) / filename
+        
+        # Check if file exists
+        if not movie_path.exists():
+            return jsonify({"error": "Movie not found"}), 404
+        
+        # Send file with proper streaming support
+        return send_file(
+            str(movie_path),
+            mimetype='video/mp4',
+            as_attachment=False
+        )
+    except Exception as e:
+        print(f"[Movies] Error serving {filename}: {e}")
+        return jsonify({"error": "Error retrieving movie"}), 500
 
 # --- CONTRÔLE TV (PROXY POUR SHELLY) ---
 @app.route('/tv-power', methods=['POST'])

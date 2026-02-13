@@ -136,8 +136,8 @@ export class PlayerManager extends EventEmitter {
     const lastData = this.state.getMovieData(filename);
     const lastTime = lastData.currentTime || 0;
 
-    // Load and play movie
-    this.moviePlayer.src = `movies/${filename}`;
+    // Load and play movie via API endpoint
+    this.moviePlayer.src = `${this.apiClient.baseUrl}/get-movie/${encodeURIComponent(filename)}`;
     this.moviePlayer.currentTime = lastTime;
     this.moviePlayer.play();
 
