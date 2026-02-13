@@ -71,38 +71,33 @@ sudo systemctl start tv-app
 
 ## 🔧 Configuration
 
-### .env (Optionnel)
+### Gestion des Données
 
-Créer `.env` à la racine du projet:
-```env
-# Windows
-TV_SAVE_FILE=data/progression.json
-TV_MOVIES_SAVE_FILE=data/movies_progress.json
-TV_MOVIES_DIR=movies/
+Les données (progression, alarmes, etc.) sont stockées dans un dossier **externe au dépôt git** (`../tv_data/`) pour éviter les conflits lors des mises à jour.
 
-# Ou Debian
-TV_SAVE_FILE=/home/tv/app_tv/progression.json
-TV_MOVIES_SAVE_FILE=/home/tv/app_tv/movies_progress.json
-TV_MOVIES_DIR=/home/tv/app_tv/movies/
+Le dossier `tv_data` est créé automatiquement au démarrage du backend s'il n'existe pas. Aucune configuration d'environnement n'est requise.
 
-# Mode développement (hardwares émulés en console)
-TV_DEV_MODE=true
+**Structure:**
+```
+tv/
+  tv_app/           # Dépôt git
+  tv_data/          # Données persistantes (hors git)
+    progression.json
+    movies_progress.json
+    alarm.json
 ```
 
 ### config.js
 
-Modifie `config.js` pour customiser:
+Modifier `config.js` pour customiser les URLs d'API:
 ```javascript
-const devConfig = {
+const config = {
   api: {
-    baseUrl: 'http://localhost:5000',
+    host: 'http://localhost:5000',  // URL du backend
+    ...
   },
   hardware: {
-    tvUrl: 'http://192.168.1.19/rpc/Switch.Set', // IP de la prise intelligente
-    emulated: true,
-  },
-  player: {
-    wakeupPlaylist: 6, // Index de la chaîne réveil
+    tvControl: 'http://192.168.1.19/rpc/Switch.Set', // IP de la prise intelligente
   },
 };
 ```
@@ -115,7 +110,7 @@ const devConfig = {
 | Frontend blanc | Console (F12): chercher erreurs |
 | Chaînes ne chargent pas | Attendre 3s + F5 (YouTube API) |
 | Port 5000 utilisé | `lsof -i :5000` ou déterminer autre port |
-| Données non sauvegardées | Vérifier `data/` exists (Windows) |
+| Données non sauvegardées | Vérifier que `../tv_data/` est accessible |
 | Clavier ne répond pas | Vérifier console (F12) pour erreurs |
 
 ## 🔍 Débugging
@@ -141,8 +136,8 @@ POST /movies-progress           # Sauvegarder position film
 ## 🚀 Déploiement
 
 1. Clone repo sur `/home/tv/app_tv/`
-2. `pip install -r requirements.txt`
-3. Configurer `.env` avec paths Linux
+2. Créer dossier de données: `mkdir -p ../tv_data` (au niveau parent du git)
+3. `pip install -r requirements.txt`
 4. Configurer IP prise Shelly dans `config.js`
 5. Créer service systemd (voir Setup Debian)
 6. Accéder via navigateur (http://mini-pc-ip:8000)

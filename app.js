@@ -32,7 +32,7 @@ const app = {
  */
 async function bootstrap() {
   console.log('🚀 Starting TV App');
-  console.log('Environment:', config.environment);
+  console.log('OS:', config.os);
   console.log('Config:', config);
 
   try {

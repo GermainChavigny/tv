@@ -1,10 +1,6 @@
-# Données locales (progression, alarmes, etc.)
-# Stockées en dehors du dépôt git pour éviter les conflits
-data/
-
-# Configuration d'environnement local
-.env
-.env.local
+# Données externes
+# Les données sont stockées dans ../tv_data (en dehors du dépôt git)
+# pour éviter les conflits lors des mises à jour git
 
 # Dépendances
 node_modules/

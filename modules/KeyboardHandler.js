@@ -14,17 +14,7 @@ export class KeyboardHandler extends EventEmitter {
   }
 
   /**
-   * Detect if running on Linux/Debian (from config.js)
-   */
-  detectEnvironment() {
-    // Check config.environment to determine dev vs prod
-    const isProduction = config.environment === 'production';
-    console.log(`Environment detected: ${isProduction ? 'Production (Debian)' : 'Development (Windows)'}`);
-    return isProduction;
-  }
-
-  /**
-   * Setup keyboard mapping based on environment
+   * Setup keyboard mapping based on OS detection
    */
   setupKeyMapping() {
     if (config.os === 'linux') {

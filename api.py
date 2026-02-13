@@ -9,36 +9,29 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for all routes
 
 # ============ CONFIGURATION ============
-# Support pour variables d'environnement et détection automatique du système d'exploitation
+# Chemins unifiés vers le dossier tv_data créé en dehors du git (parent du dossier)
 
-def get_save_path():
+# Créer le dossier tv_data en dehors du git si nécessaire
+def get_data_dir():
     """
-    Détecte le système d'exploitation et retourne le chemin approprié
-    Windows: utilise des chemins locaux pour dev
-    Linux/Debian: utilise les chemins /home/tv/...
+    Retourne le chemin du dossier tv_data créé en dehors du dossier du git.
+    Le dossier est situé dans le parent du dossier tv_app.
     """
-    if os.name == 'nt':  # Windows
-        # Dev local sur Windows
-        base_dir = Path(__file__).parent / 'data'
-        base_dir.mkdir(exist_ok=True)
-        return str(base_dir / 'progression.json'), str(base_dir / 'movies_progress.json'), str(base_dir / 'alarm.json')
-    else:  # Linux/Debian
-        # Production sur mini PC Debian
-        data_dir = "/home/tv/app_tv/data"
-        os.makedirs(data_dir, exist_ok=True)
-        return f"{data_dir}/progression.json", f"{data_dir}/movies_progress.json", f"{data_dir}/alarm.json"
+    # Chemin vers le parent du dossier tv_app
+    parent_dir = Path(__file__).parent.parent
+    data_dir = parent_dir / 'tv_data'
+    data_dir.mkdir(exist_ok=True)
+    return str(data_dir)
 
-# Ou utiliser les variables d'environnement si définies
-SAVE_FILE = os.getenv('TV_SAVE_FILE') or get_save_path()[0]
-MOVIES_SAVE_FILE = os.getenv('TV_MOVIES_SAVE_FILE') or get_save_path()[1]
-ALARM_FILE = os.getenv('TV_ALARM_FILE') or get_save_path()[2]
-MOVIES_DIR = os.getenv('TV_MOVIES_DIR') or os.path.join(os.path.dirname(__file__), 'movies')
-TV_CONTROL_URL = os.getenv('TV_CONTROL_URL') or 'http://192.168.1.19/rpc/Switch.Set'
+DATA_DIR = get_data_dir()
+SAVE_FILE = os.path.join(DATA_DIR, 'progression.json')
+MOVIES_SAVE_FILE = os.path.join(DATA_DIR, 'movies_progress.json')
+ALARM_FILE = os.path.join(DATA_DIR, 'alarm.json')
+MOVIES_DIR = os.path.join(os.path.dirname(__file__), 'movies')
+TV_CONTROL_URL = 'http://192.168.1.19/rpc/Switch.Set'
 
-# Émulation du matériel en dev
-DEV_MODE = os.getenv('TV_DEV_MODE', 'false').lower() == 'true'
-
-print(f"[TV App] OS: {os.name} | Save file: {SAVE_FILE} | Dev mode: {DEV_MODE}")
+print(f"[TV App] Data directory: {DATA_DIR}")
+print(f"[TV App] Save file: {SAVE_FILE}")
 print(f"[TV App] TV Control URL: {TV_CONTROL_URL}")
 
 # ============ ENDPOINTS ============
@@ -180,10 +173,10 @@ def health():
     return jsonify({
         "status": "ok",
         "version": "2.0",
-        "environment": "production" if not DEV_MODE else "development"
+        "data_dir": DATA_DIR
     })
 
 if __name__ == '__main__':
     # Tourne sur le port 5000
-    # En dev: 0.0.0.0 pour accepter les connexions depuis n'importe où
-    app.run(host='0.0.0.0', port=5000, debug=DEV_MODE)
+    # 0.0.0.0 pour accepter les connexions depuis n'importe où
+    app.run(host='0.0.0.0', port=5000, debug=False)
