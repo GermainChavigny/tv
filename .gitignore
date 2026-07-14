@@ -12,3 +12,5 @@ __pycache__/
 # Fichiers temporaires
 *.tmp
 .DS_Store
+# Harness de capture dev-only
+_preview.html

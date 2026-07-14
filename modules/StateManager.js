@@ -11,12 +11,12 @@ class StateManager extends EventEmitter {
     
     // Playlist and progress state
     this.playlistData = {}; // {playlistId: {videoId, videoIndex, currentTime}}
-    this.movieData = {}; // {filename: {currentTime}}
-    this.movies = []; // List of available movie files
+    this.dataLoadedOk = false; // true après un chargement serveur réussi (protège l'auto-save)
+    // Les films (catalogue + progression) sont gérés par MovieLibrary, pas ici.
 
     // Player state
     this.currentPlaylistId = null;
-    this.currentMovieFile = null;
+    this.currentMovieFile = null; // id du film en cours (bibliothèque)
     this.isMovieMode = false;
     this.player = null; // YouTube player instance
     this.moviePlayer = null; // HTML5 video element
@@ -58,22 +58,6 @@ class StateManager extends EventEmitter {
 
   getPlaylistData(playlistId) {
     return this.playlistData[playlistId] || { videoId: '', videoIndex: 0, currentTime: 0 };
-  }
-
-  // ============ MOVIE DATA ============
-
-  setMovieData(filename, data) {
-    this.movieData[filename] = data;
-    this.emit('movieDataChanged', { filename, data });
-  }
-
-  getMovieData(filename) {
-    return this.movieData[filename] || { currentTime: 0 };
-  }
-
-  setMovies(movies) {
-    this.movies = movies;
-    this.emit('moviesListChanged', movies);
   }
 
   // ============ PLAYER STATE ============
@@ -175,17 +159,17 @@ class StateManager extends EventEmitter {
    */
   async loadAllData(apiClient) {
     try {
+      // Progression des playlists YouTube (les films sont gérés à part par
+      // MovieLibrary, qui charge son propre catalogue depuis /movies/library).
       const playlistData = await apiClient.loadPlaylistProgress();
-      const movieData = await apiClient.loadMovieProgress();
-      const movies = await apiClient.loadMoviesList();
-
       this.playlistData = playlistData || {};
-      this.movieData = movieData || {};
-      this.movies = movies || [];
+      this.dataLoadedOk = true;
 
-      this.emit('dataLoaded', { playlistData, movieData, movies });
+      this.emit('dataLoaded', { playlistData });
       return true;
     } catch (err) {
+      // dataLoadedOk reste false : l'auto-save est bloqué pour ne pas écraser
+      // la progression serveur avec un état vide.
       console.error('Error loading data:', err);
       this.emit('dataLoadError', err);
       return false;
@@ -197,8 +181,6 @@ class StateManager extends EventEmitter {
    */
   reset() {
     this.playlistData = {};
-    this.movieData = {};
-    this.movies = [];
     this.currentPlaylistId = null;
     this.currentMovieFile = null;
     this.isMovieMode = false;
@@ -213,8 +195,6 @@ class StateManager extends EventEmitter {
   getState() {
     return {
       playlistData: { ...this.playlistData },
-      movieData: { ...this.movieData },
-      movies: [...this.movies],
       currentPlaylistId: this.currentPlaylistId,
       currentMovieFile: this.currentMovieFile,
       isMovieMode: this.isMovieMode,

@@ -53,27 +53,81 @@ export class ApiClient {
   }
 
   /**
-   * Load movie progress from server
+   * Load the full movie library (catalogue) from server
    */
-  async loadMovieProgress() {
-    return this.request(this.endpoints.moviesProgress);
+  async loadLibrary() {
+    return this.request(this.endpoints.library);
   }
 
   /**
-   * Save movie progress to server
+   * Patch one library entry (playback progress, watched flag, ...)
    */
-  async saveMovieProgress(data) {
-    return this.request(this.endpoints.moviesProgress, {
+  async saveLibraryEntry(id, fields) {
+    return this.request(this.endpoints.library, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify({ id, fields }),
     });
   }
 
   /**
-   * Get list of available movies
+   * Search movies via the backend indexer(s) + TMDB
    */
-  async loadMoviesList() {
-    return this.request(this.endpoints.moviesList);
+  async searchMovies(query) {
+    return this.request(this.endpoints.moviesSearch, {
+      method: 'POST',
+      body: JSON.stringify({ query }),
+    });
+  }
+
+  /**
+   * Start a download/transcode job (magnet + metadata, or local file)
+   */
+  async downloadMovie(payload) {
+    return this.request(this.endpoints.moviesDownload, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /**
+   * Poll active download/transcode jobs
+   */
+  async moviesStatus() {
+    return this.request(this.endpoints.moviesStatus);
+  }
+
+  /**
+   * Cancel a running/queued job
+   */
+  async cancelMovie(id) {
+    return this.request(this.endpoints.moviesCancel, {
+      method: 'POST',
+      body: JSON.stringify({ id }),
+    });
+  }
+
+  /**
+   * Delete a movie from the library (entry + files)
+   */
+  async deleteMovie(id) {
+    return this.request(this.endpoints.moviesDelete || '/movies/delete', {
+      method: 'POST',
+      body: JSON.stringify({ id }),
+    });
+  }
+
+  /**
+   * Build the URL of a movie poster (served by the backend)
+   */
+  posterUrl(id) {
+    return `${this.baseUrl}${this.endpoints.poster}/${encodeURIComponent(id)}`;
+  }
+
+  /**
+   * Build the URL of a subtitle track (WebVTT) for a given language
+   */
+  subtitleUrl(id, lang) {
+    return `${this.baseUrl}${this.endpoints.subtitle}/${encodeURIComponent(id)}/${encodeURIComponent(lang)}`;
   }
 
   /**

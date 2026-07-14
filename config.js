@@ -18,9 +18,18 @@ const config = {
     endpoints: {
       load: '/load',
       save: '/save',
-      moviesProgress: '/movies-progress',
-      moviesList: '/movies-list',
       tvPower: '/tv-power',
+      alarmSettings: '/alarm-settings',
+      // Bibliothèque de films (source unique : library.json)
+      library: '/movies/library',
+      poster: '/poster',        // + /<id>
+      subtitle: '/subtitle',    // + /<id>/<lang>
+      // Téléchargement (paliers suivants)
+      moviesSearch: '/movies/search',
+      moviesDownload: '/movies/download',
+      moviesStatus: '/movies/status',
+      moviesCancel: '/movies/cancel',
+      moviesDelete: '/movies/delete',
     },
   },
   hardware: {

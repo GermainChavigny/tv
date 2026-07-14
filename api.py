@@ -5,6 +5,12 @@ import os
 from pathlib import Path
 import requests
 
+import re
+import time
+
+from movie_pipeline import Library, JobWorker, atomic_write_json
+from movie_sources import Indexer, Tmdb, Subtitles, load_secrets, clean_torrent_title
+
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for all routes
 
@@ -36,13 +42,33 @@ def get_movies_dir():
 
 DATA_DIR = get_data_dir()
 MOVIES_DIR = get_movies_dir()
+POSTERS_DIR = os.path.join(DATA_DIR, 'posters')
 SAVE_FILE = os.path.join(DATA_DIR, 'progression.json')
-MOVIES_SAVE_FILE = os.path.join(DATA_DIR, 'movies_progress.json')
 ALARM_FILE = os.path.join(DATA_DIR, 'alarm.json')
 TV_CONTROL_URL = 'http://192.168.1.19/rpc/Switch.Set'
 
+# Catalogue des films (source unique : tv_data/library.json)
+library = Library(DATA_DIR, POSTERS_DIR)
+
+# Sources externes (clés API + indexeurs dans tv_data/secrets.json, hors git)
+secrets = load_secrets(DATA_DIR)
+indexer = Indexer(secrets.get('indexers'))
+tmdb = Tmdb(secrets.get('tmdb', {}).get('apiKey'))
+_os = secrets.get('opensubtitles', {})
+subtitles = Subtitles(_os.get('apiKey'), _os.get('username'), _os.get('password'))
+
+# Worker de téléchargement/transcodage (1 job à la fois) + reprise post-reboot
+DOWNLOADS_DIR = os.path.join(DATA_DIR, 'downloads')
+worker = JobWorker(library, MOVIES_DIR, DOWNLOADS_DIR, subtitles_fetcher=subtitles)
+worker.resume_pending()
+
+print(f"[TV App] Indexeurs: {len(secrets.get('indexers') or [])} | "
+      f"TMDB: {'oui' if tmdb.available() else 'non'} | "
+      f"OpenSubtitles: {'oui' if subtitles.available() else 'non'}")
+
 print(f"[TV App] Data directory: {DATA_DIR}")
 print(f"[TV App] Movies directory: {MOVIES_DIR}")
+print(f"[TV App] Posters directory: {POSTERS_DIR}")
 print(f"[TV App] TV Control URL: {TV_CONTROL_URL}")
 
 # ============ ENDPOINTS ============
@@ -63,63 +89,216 @@ def load_progress():
 @app.route('/save', methods=['POST'])
 def save_progress():
     data = request.json
-    
-    # Créer les répertoires s'ils n'existent pas
+
+    # Refuse une sauvegarde vide si une progression existe déjà : dernier filet
+    # de sécurité contre l'écrasement du fichier par un client mal initialisé.
+    if not data and os.path.exists(SAVE_FILE) and os.path.getsize(SAVE_FILE) > 2:
+        print("[Save] Refus d'écraser la progression existante avec un état vide")
+        return jsonify({"status": "rejected", "reason": "empty payload"}), 409
+
     os.makedirs(os.path.dirname(SAVE_FILE), exist_ok=True)
-    
-    # Tout doit se passer tant que le fichier est ouvert (dans le bloc 'with')
-    with open(SAVE_FILE, 'w') as f:
-        json.dump(data, f)
-        
-        f.flush()
-        os.fsync(f.fileno())
-    
-    # Ici le fichier est fermé proprement, on peut répondre au navigateur
+    # Écriture atomique (tmp + rename) : pas de fichier tronqué en cas de coupure
+    atomic_write_json(SAVE_FILE, data)
     return jsonify({"status": "ok"})
 
-# --- CHARGER LA PROGRESSION DES FILMS ---
-@app.route('/movies-progress', methods=['GET'])
-def load_movies_progress():
-    if not os.path.exists(MOVIES_SAVE_FILE):
-        return jsonify({}) # Retourne vide si pas de fichier
-    try:
-        with open(MOVIES_SAVE_FILE, 'r') as f:
-            data = json.load(f)
-        return jsonify(data)
-    except:
-        return jsonify({})
+# --- BIBLIOTHÈQUE DE FILMS ---
+# library.json est désormais la source unique pour les films : métadonnées,
+# progression de lecture et flag vu/pas-vu (remplace movies_progress.json).
 
-# --- SAUVEGARDER LA PROGRESSION DES FILMS ---
-@app.route('/movies-progress', methods=['POST'])
-def save_movies_progress():
-    data = request.json
-    
-    # Créer les répertoires s'ils n'existent pas
-    os.makedirs(os.path.dirname(MOVIES_SAVE_FILE), exist_ok=True)
-    
-    # Tout doit se passer tant que le fichier est ouvert (dans le bloc 'with')
-    with open(MOVIES_SAVE_FILE, 'w') as f:
-        json.dump(data, f)
-        
-        f.flush()
-        os.fsync(f.fileno())
-    
-    # Ici le fichier est fermé proprement, on peut répondre au navigateur
-    return jsonify({"status": "ok"})
+def _reject_traversal(name):
+    """Retourne True si `name` tente une sortie de répertoire."""
+    return '..' in name or '/' in name or '\\' in name
 
-# --- RÉCUPÉRER LA LISTE DES FICHIERS VIDÉO ---
-@app.route('/movies-list', methods=['GET'])
-def get_movies_list():
-    if not os.path.exists(MOVIES_DIR):
-        return jsonify([])
-    
-    try:
-        # Récupérer tous les fichiers .mp4 dans le dossier movies
-        files = [f for f in os.listdir(MOVIES_DIR) if f.lower().endswith('.mp4')]
-        files.sort()
-        return jsonify(files)
-    except:
-        return jsonify([])
+
+@app.route('/movies/library', methods=['GET'])
+def get_library():
+    """Retourne le catalogue complet {id: entry} (données de la grille).
+    Enrichit chaque entrée avec `fileSize` (octets du fichier transcodé), calculé
+    à la volée pour l'affichage « 2.1 GB » du volet détail."""
+    data = library.all()
+    for entry in data.values():
+        entry['fileSize'] = None
+        fname = entry.get('file')
+        if fname and not _reject_traversal(fname):
+            path = Path(MOVIES_DIR) / fname
+            try:
+                if path.exists():
+                    entry['fileSize'] = path.stat().st_size
+            except OSError:
+                pass
+    return jsonify(data)
+
+
+@app.route('/movies/library', methods=['POST'])
+def patch_library():
+    """
+    Met à jour partiellement une entrée (progression, vu, etc.).
+    Body attendu : {"id": "<slug>", "fields": {"currentTime": ..., "duration": ...}}
+    """
+    data = request.json or {}
+    movie_id = data.get('id')
+    fields = data.get('fields', {})
+    if not movie_id:
+        return jsonify({"error": "Missing id"}), 400
+
+    entry = library.patch(movie_id, fields)
+    if entry is None:
+        return jsonify({"error": "Unknown movie id"}), 404
+    return jsonify({"status": "ok", "entry": entry})
+
+
+@app.route('/movies/delete', methods=['POST'])
+def delete_movie():
+    """Supprime un film : annule le job éventuel, retire l'entrée + les fichiers
+    dérivés (vidéo, affiche, sous-titres .vtt). Ne touche jamais rien hors des
+    dossiers dédiés (gardes anti-traversal)."""
+    data = request.json or {}
+    movie_id = data.get('id')
+    if not movie_id:
+        return jsonify({"error": "Missing id"}), 400
+    entry = library.get(movie_id)
+    if entry is None:
+        return jsonify({"error": "Unknown movie id"}), 404
+
+    # Annule d'abord un téléchargement/transcodage en cours pour ce film.
+    if entry.get('status') in ('queued', 'downloading', 'fetching-subs', 'transcoding'):
+        worker.cancel(movie_id)
+
+    def _safe_unlink(directory, name):
+        if not name or _reject_traversal(name):
+            return
+        path = Path(directory) / name
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError as err:
+            print(f"[Delete] {path}: {err}")
+
+    _safe_unlink(MOVIES_DIR, entry.get('file'))
+    _safe_unlink(POSTERS_DIR, entry.get('poster'))
+    for sub_name in (entry.get('subtitles') or {}).values():
+        _safe_unlink(MOVIES_DIR, sub_name)
+
+    library.delete(movie_id)
+    return jsonify({"status": "deleted", "id": movie_id})
+
+
+def _slugify(title, year=None):
+    """'The Matrix', 1999 -> 'the-matrix-1999' (id + noms de fichiers)."""
+    slug = re.sub(r'[^a-z0-9]+', '-', str(title).lower()).strip('-') or 'film'
+    return f"{slug}-{year}" if year else slug
+
+
+@app.route('/movies/search', methods=['POST'])
+def movies_search():
+    """
+    Recherche un film : interroge les indexeurs (repli IP) puis enrichit avec
+    TMDB (affiche + année). Body : {"query": "titre"}.
+    Retourne : [{title, year, tmdbId, posterUrl, imdbId, torrents:[...]}]
+    """
+    query = (request.json or {}).get('query', '').strip()
+    if not query:
+        return jsonify({"error": "query vide"}), 400
+    if not indexer.available():
+        return jsonify({"error": "Aucun indexeur configuré (tv_data/secrets.json)"}), 503
+
+    found = indexer.search(query)
+
+    results = []
+    for movie in found:
+        if not movie.get('torrents'):
+            continue  # rien de téléchargeable
+
+        # Nettoie le nom de torrent bruité pour fiabiliser le match TMDB
+        clean_title, parsed_year = clean_torrent_title(movie['title'])
+        year_hint = movie.get('year') or parsed_year
+        meta = tmdb.search(clean_title, year_hint) if (tmdb.available() and clean_title) else None
+
+        results.append({
+            # Titre/année propres même sans TMDB (utile pour l'affiche ET les sous-titres)
+            "title": (meta or {}).get('title') or clean_title or movie['title'],
+            "year": (meta or {}).get('year') or year_hint,
+            "tmdbId": (meta or {}).get('tmdbId'),
+            "imdbId": movie.get('imdbId'),
+            "posterUrl": (meta or {}).get('posterUrl') or movie.get('cover'),
+            "overview": (meta or {}).get('overview'),
+            "torrents": movie['torrents'],
+        })
+    return jsonify(results)
+
+
+@app.route('/movies/download', methods=['POST'])
+def movies_download():
+    """
+    Crée un job et le met en file. Deux sources possibles :
+      - torrent : {"magnet": "...", "title": ..., "year": ..., "tmdbId": ...,
+                   "imdbId": ..., "posterUrl": ...}
+      - fichier local (transcodage seul) : {"localFile": "1.mkv", "title": ...}
+    Renvoie l'id immédiatement ; le worker traite en arrière-plan.
+    """
+    data = request.json or {}
+    magnet = data.get('magnet')
+    local_file = data.get('localFile')
+    title = data.get('title') or local_file
+    year = data.get('year')
+
+    if not title:
+        return jsonify({"error": "title requis"}), 400
+    if not magnet and not local_file:
+        return jsonify({"error": "magnet ou localFile requis"}), 400
+
+    if local_file:
+        if _reject_traversal(local_file):
+            return jsonify({"error": "Invalid filename"}), 400
+        if not (Path(MOVIES_DIR) / local_file).exists():
+            return jsonify({"error": f"Fichier introuvable : {local_file}"}), 404
+
+    movie_id = _slugify(title, year)
+    if library.get(movie_id):
+        return jsonify({"error": "Ce film existe déjà", "id": movie_id}), 409
+
+    # Affiche : téléchargée localement pour être servie par /poster/<id>
+    poster_name = None
+    poster_url = data.get('posterUrl')
+    if poster_url:
+        poster_name = f"{movie_id}.jpg"
+        if not tmdb.download_poster(poster_url, os.path.join(POSTERS_DIR, poster_name)):
+            poster_name = None
+
+    entry = {
+        "id": movie_id, "title": title, "year": year,
+        "tmdbId": data.get('tmdbId'), "imdbId": data.get('imdbId'),
+        "poster": poster_name, "file": f"{movie_id}.mp4",
+        "subtitles": {}, "duration": 0,
+        "status": "queued",
+        "progress": {"download": 0 if magnet else 1, "transcode": 0},
+        "error": None, "magnet": magnet,
+        "localSource": local_file,
+        "addedAt": int(time.time()),
+        "currentTime": 0, "watched": False,
+        "subtitleMode": None, "subtitleOffset": 0,
+    }
+    library.upsert(entry)
+    worker.enqueue(movie_id)
+    return jsonify({"status": "queued", "id": movie_id})
+
+
+@app.route('/movies/status', methods=['GET'])
+def movies_status():
+    """Snapshot léger des jobs non terminés (polling frontend ~1,5 s)."""
+    return jsonify(worker.active_jobs())
+
+
+@app.route('/movies/cancel', methods=['POST'])
+def movies_cancel():
+    """Annule un job en attente ou en cours. Body : {"id": "<slug>"}"""
+    data = request.json or {}
+    movie_id = data.get('id')
+    if not movie_id or not library.get(movie_id):
+        return jsonify({"error": "Unknown movie id"}), 404
+    worker.cancel(movie_id)
+    return jsonify({"status": "cancelled", "id": movie_id})
+
 
 # --- SERVIR UN FICHIER VIDÉO ---
 @app.route('/get-movie/<filename>', methods=['GET'])
@@ -127,15 +306,15 @@ def get_movie(filename):
     """Serve a movie file from the movies directory"""
     try:
         # Security: ensure filename doesn't contain path traversal
-        if '..' in filename or '/' in filename or '\\' in filename:
+        if _reject_traversal(filename):
             return jsonify({"error": "Invalid filename"}), 400
-        
+
         movie_path = Path(MOVIES_DIR) / filename
-        
+
         # Check if file exists
         if not movie_path.exists():
             return jsonify({"error": "Movie not found"}), 404
-        
+
         # Send file with proper streaming support
         return send_file(
             str(movie_path),
@@ -145,6 +324,38 @@ def get_movie(filename):
     except Exception as e:
         print(f"[Movies] Error serving {filename}: {e}")
         return jsonify({"error": "Error retrieving movie"}), 500
+
+
+# --- SERVIR UNE AFFICHE ---
+@app.route('/poster/<movie_id>', methods=['GET'])
+def get_poster(movie_id):
+    """Sert l'affiche tv_data/posters/<id>.jpg d'un film du catalogue."""
+    if _reject_traversal(movie_id):
+        return jsonify({"error": "Invalid id"}), 400
+
+    entry = library.get(movie_id)
+    poster_name = (entry or {}).get('poster') if entry else None
+    poster_path = Path(POSTERS_DIR) / poster_name if poster_name else None
+
+    if not poster_path or not poster_path.exists():
+        return jsonify({"error": "Poster not found"}), 404
+    return send_file(str(poster_path), mimetype='image/jpeg')
+
+
+# --- SERVIR UN SOUS-TITRE (WebVTT) ---
+@app.route('/subtitle/<movie_id>/<lang>', methods=['GET'])
+def get_subtitle(movie_id, lang):
+    """Sert le fichier .vtt d'une langue donnée pour un film du catalogue."""
+    if _reject_traversal(movie_id) or _reject_traversal(lang):
+        return jsonify({"error": "Invalid parameters"}), 400
+
+    entry = library.get(movie_id)
+    sub_name = (entry or {}).get('subtitles', {}).get(lang) if entry else None
+    sub_path = Path(MOVIES_DIR) / sub_name if sub_name else None
+
+    if not sub_path or not sub_path.exists():
+        return jsonify({"error": "Subtitle not found"}), 404
+    return send_file(str(sub_path), mimetype='text/vtt')
 
 # --- CONTRÔLE TV (PROXY POUR SHELLY) ---
 @app.route('/tv-power', methods=['POST'])
@@ -187,18 +398,11 @@ def load_alarm_settings():
 @app.route('/alarm-settings', methods=['POST'])
 def save_alarm_settings():
     data = request.json
-    
-    # Créer les répertoires s'ils n'existent pas
+
     os.makedirs(os.path.dirname(ALARM_FILE), exist_ok=True)
-    
-    # Tout doit se passer tant que le fichier est ouvert (dans le bloc 'with')
-    with open(ALARM_FILE, 'w') as f:
-        json.dump(data, f)
-        
-        f.flush()
-        os.fsync(f.fileno())
-    
-    # Ici le fichier est fermé proprement, on peut répondre au navigateur
+    # Écriture atomique (tmp + rename) : pas de fichier tronqué en cas de coupure
+    atomic_write_json(ALARM_FILE, data)
+
     print(f"[Alarm] Settings saved: {data}")
     return jsonify({"status": "ok"})
 
