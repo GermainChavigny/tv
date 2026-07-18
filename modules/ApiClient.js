@@ -25,7 +25,12 @@ export class ApiClient {
       });
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status} ${response.statusText}`);
+        // Le backend renvoie {"error": "..."} sur ses 4xx/5xx : remonter ce
+        // message plutôt qu'un code nu, pour qu'un écran puisse l'afficher.
+        const detail = await response.json().catch(() => null);
+        throw new Error(
+          (detail && detail.error) || `API error: ${response.status} ${response.statusText}`
+        );
       }
 
       return await response.json();
@@ -114,6 +119,38 @@ export class ApiClient {
       method: 'POST',
       body: JSON.stringify({ id }),
     });
+  }
+
+  /**
+   * Ask the Movie Advisor for 3 recommendations matching the criteria.
+   * The backend adds the exclusions (blacklist + owned movies) itself.
+   * @param {object} criteria  { mood, pace, era, scale, rating, length, theme1, theme2 }
+   * @param {string} [keywords]  free-text added to the prompt (actor, theme…)
+   * @returns {Promise<Array<{id,title,year,posterUrl,summary}>>}
+   */
+  async adviseMovies(criteria, keywords = '') {
+    return this.request(this.endpoints.advisorRecommend, {
+      method: 'POST',
+      body: JSON.stringify({ criteria, keywords }),
+    });
+  }
+
+  /**
+   * Blacklist a movie so the advisor never recommends it again (persisted).
+   */
+  async forgetMovie({ id, title, year }) {
+    return this.request(this.endpoints.advisorForget, {
+      method: 'POST',
+      body: JSON.stringify({ id, title, year }),
+    });
+  }
+
+  /**
+   * Weather for the next hour (Tours), proxied by the backend from Open-Meteo.
+   * @returns {Promise<{code:number, hour:string}>}
+   */
+  async getWeather() {
+    return this.request(this.endpoints.weather);
   }
 
   /**

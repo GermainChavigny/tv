@@ -18,7 +18,13 @@ import { MovieBrowser } from './modules/MovieBrowser.js';
 import { MovieControls } from './modules/MovieControls.js';
 import { VirtualKeyboard } from './modules/VirtualKeyboard.js';
 import { MovieDownloader } from './modules/MovieDownloader.js';
+import { MovieAdvisor } from './modules/MovieAdvisor.js';
+import { SubtitleHud } from './modules/SubtitleHud.js';
 import { startRetroClock } from './modules/RetroClock.js';
+import { startWeather } from './modules/Weather.js';
+import { VolumeOverlay } from './modules/VolumeOverlay.js';
+import { WeatherPopup } from './modules/WeatherPopup.js';
+import { startRetroFx } from './modules/RetroFx.js';
 
 // Global app instance
 const app = {
@@ -36,6 +42,10 @@ const app = {
   movieControls: null,
   virtualKeyboard: null,
   movieDownloader: null,
+  movieAdvisor: null,
+  subtitleHud: null,
+  volumeOverlay: null,
+  weatherPopup: null,
 };
 
 /**
@@ -62,11 +72,33 @@ async function bootstrap() {
 
     app.movieLibrary = new MovieLibrary(apiClient);
     app.playerManager.setLibrary(app.movieLibrary);
+    // Vidéo d'intro locale (boucle native) : jouée au démarrage, retirée dès
+    // qu'une chaîne ou un film prend le relais.
+    const introEl = document.getElementById('intro-player');
+    if (introEl) {
+      app.playerManager.setIntroPlayer(introEl);
+      introEl.play().catch(() => {}); // au cas où l'attribut autoplay ne parte pas
+    }
     app.movieBrowser = new MovieBrowser(app.movieLibrary).init();
     app.movieControls = new MovieControls().init();
     app.virtualKeyboard = new VirtualKeyboard().init();
     app.movieDownloader = new MovieDownloader(apiClient, voiceAnnouncer).init();
+    app.movieAdvisor = new MovieAdvisor(apiClient).init();
+    app.subtitleHud = new SubtitleHud().init();
+    app.volumeOverlay = new VolumeOverlay().init();
+    app.weatherPopup = new WeatherPopup().init();
     startRetroClock(); // horloge/date des en-têtes rétro
+    startWeather();    // icône météo (prévision +1h de Tours) à côté de la date
+    // Clic sur l'horloge/icône d'un en-tête → popup de prévisions du jour.
+    document.addEventListener('click', (e) => {
+      const cw = e.target.closest('.crt-clock-wrap');
+      if (cw && cw.closest('.crt-header')) app.weatherPopup.toggle();
+    });
+    // Effet de chargement rétro + sons, branché sur les 5 overlays films.
+    startRetroFx([
+      app.movieBrowser.root, app.movieDownloader.root, app.movieAdvisor.root,
+      app.virtualKeyboard.root, app.movieControls.root,
+    ]);
     attachMovieHandlers();
 
     // 4. Initialize keyboard handler
@@ -103,15 +135,25 @@ const lastMouse = { x: 0, y: 0 };
 window.addEventListener('mousemove', (e) => {
   lastMouse.x = e.clientX;
   lastMouse.y = e.clientY;
+  // Souris bougée pendant la lecture → réveille le HUD de recalage des
+  // sous-titres (il se rendort tout seul après quelques secondes).
+  if (app.subtitleHud && state.isMovieMode && !anyMovieOverlayOpen()) {
+    app.subtitleHud.wake();
+  }
 }, { passive: true });
+
+/** Vrai si l'un des écrans films couvre l'image (le HUD doit alors s'effacer). */
+function anyMovieOverlayOpen() {
+  return (app.movieBrowser && app.movieBrowser.isOpen)
+    || (app.virtualKeyboard && app.virtualKeyboard.isOpen)
+    || (app.movieControls && app.movieControls.isOpen)
+    || (app.movieDownloader && app.movieDownloader.isOpen)
+    || (app.movieAdvisor && app.movieAdvisor.isOpen);
+}
 
 /** Vrai quand on est « sur la chaîne Movies » (film joué ou un overlay ouvert). */
 function inMovieUI() {
-  return state.isMovieMode
-    || (app.movieBrowser && app.movieBrowser.isOpen)
-    || (app.virtualKeyboard && app.virtualKeyboard.isOpen)
-    || (app.movieControls && app.movieControls.isOpen)
-    || (app.movieDownloader && app.movieDownloader.isOpen);
+  return state.isMovieMode || anyMovieOverlayOpen();
 }
 
 /**
@@ -148,6 +190,7 @@ function attachKeyboardHandlers() {
   });
 
   // Playlist selection
+  let openMoviesTimer = null;
   kb.on('playlist', (index) => {
     console.log(`Selected playlist ${index}`);
     const playlist = state.playlists[index];
@@ -160,12 +203,22 @@ function attachKeyboardHandlers() {
       if (state.player && typeof state.player.pauseVideo === 'function') {
         state.player.pauseVideo();
       }
-      app.movieBrowser.open();
+      // On laisse le sélecteur de chaînes montrer la 9 sélectionnée avant
+      // d'ouvrir la bibliothèque (sinon l'overlay la recouvre aussitôt).
+      clearTimeout(openMoviesTimer);
+      openMoviesTimer = setTimeout(() => {
+        // Toujours sur la chaîne Movies ? (l'utilisateur a pu re-zapper.)
+        if (state.currentPlaylistId === playlist.id && !app.movieBrowser.isOpen) {
+          app.movieBrowser.open();
+        }
+      }, 900);
       return;
     }
 
-    // Toute autre chaîne : fermer la bibliothèque puis jouer la playlist.
+    // Toute autre chaîne : annuler une ouverture Movies en attente puis jouer.
+    clearTimeout(openMoviesTimer);
     if (app.movieBrowser.isOpen) app.movieBrowser.close();
+    if (app.movieAdvisor.isOpen) app.movieAdvisor.close();
     app.movieControls.hide();
     app.playerManager.playPlaylist(index);
   });
@@ -189,23 +242,20 @@ function attachKeyboardHandlers() {
     }
   });
 
-  kb.on('volume-up', () => {
+  // Ajuste le volume (film HTML5 ou YouTube) et affiche l'OSD rétro.
+  const changeVolume = (delta) => {
+    let pct = null;
     if (state.isMovieMode && state.moviePlayer) {
-      const newVol = Math.min(100, state.moviePlayer.volume * 100 + 5);
-      state.moviePlayer.volume = newVol / 100;
-    } else if (state.player) {
-      state.player.setVolume(state.player.getVolume() + 5);
+      pct = Math.max(0, Math.min(100, state.moviePlayer.volume * 100 + delta));
+      state.moviePlayer.volume = pct / 100;
+    } else if (state.player && typeof state.player.getVolume === 'function') {
+      pct = Math.max(0, Math.min(100, state.player.getVolume() + delta));
+      state.player.setVolume(pct);
     }
-  });
-
-  kb.on('volume-down', () => {
-    if (state.isMovieMode && state.moviePlayer) {
-      const newVol = Math.max(0, state.moviePlayer.volume * 100 - 5);
-      state.moviePlayer.volume = newVol / 100;
-    } else if (state.player) {
-      state.player.setVolume(state.player.getVolume() - 5);
-    }
-  });
+    if (pct !== null && app.volumeOverlay) app.volumeOverlay.show(pct);
+  };
+  kb.on('volume-up', () => changeVolume(5));
+  kb.on('volume-down', () => changeVolume(-5));
 
   // Play/Pause
   kb.on('play-pause', () => {
@@ -328,6 +378,7 @@ function attachMovieHandlers() {
   const browser = app.movieBrowser;
   const controls = app.movieControls;
   const pm = app.playerManager;
+  const hud = app.subtitleHud;
 
   // Clic sur une affiche → lecture (avec la file triée pour next/previous)
   browser.on('play', (entry) => {
@@ -342,32 +393,77 @@ function attachMovieHandlers() {
   const keyboard = app.virtualKeyboard;
   const downloader = app.movieDownloader;
 
-  // Raccourcis de pied de page [MOVIES] / [SEARCH], communs aux 4 écrans.
+  // Raccourcis de pied de page [MOVIES] / [SEARCH] / [ADVISOR], communs à tous
+  // les écrans films.
+  const advisor = app.movieAdvisor;
   const goLibrary = () => {
     if (state.isMovieMode) pm.stopMovie();
     controls.hide();
+    hud.hide();
     keyboard.close();
     downloader.close();
+    advisor.close();
     browser.open();
   };
   const goSearch = () => {
     controls.hide();
+    hud.hide();
     downloader.close();
+    advisor.close();
     keyboard.open();
   };
-  for (const mod of [browser, keyboard, downloader, controls]) {
+  const goAdvisor = () => {
+    if (state.isMovieMode) pm.stopMovie();
+    controls.hide();
+    hud.hide();
+    keyboard.close();
+    downloader.close();
+    browser.close();
+    advisor.open(); // restaure critères + recos (état jamais réinitialisé)
+  };
+  for (const mod of [browser, keyboard, downloader, controls, advisor]) {
     mod.on('nav-library', goLibrary);
     mod.on('nav-search', goSearch);
+    mod.on('nav-advisor', goAdvisor);
   }
 
-  keyboard.on('submit', (query) => {
-    keyboard.close();
+  // SEARCH sur une reco → l'écran de recherche torrent existant (titre seul).
+  advisor.on('search-movie', ({ query }) => {
+    advisor.close();
     downloader.search(query);
   });
 
-  // Nouveau téléchargement lancé → faire apparaître sa tuile aussitôt.
+  // Le clavier sert deux écrans : le purpose (posé à open()) dit où renvoyer.
+  keyboard.on('submit', (text) => {
+    keyboard.close();
+    if (keyboard.purpose === 'advisor') {
+      advisor.setKeywords(text); // l'advisor est resté ouvert dessous
+    } else {
+      downloader.search(text);
+    }
+  });
+
+  // Champ libre du Movie Advisor : ouvre le clavier PAR-DESSUS (advisor non
+  // fermé) pour y revenir à la validation comme à l'annulation.
+  advisor.on('edit-keywords', () => {
+    keyboard.open(advisor.keywords, {
+      purpose: 'advisor',
+      title: 'Movie Advisor',
+      prompt: 'Extra keywords (actor, theme…):',
+      submitLabel: 'OK',
+    });
+  });
+
+  // Nouveau téléchargement lancé → basculer sur la bibliothèque, qui fait
+  // office de liste des téléchargements (les jobs en cours sont en tête de tri).
+  // Redirection explicite : selon le chemin emprunté (clavier ou advisor), la
+  // bibliothèque n'est pas forcément restée ouverte derrière l'écran de
+  // résultats — sans ça on retombe sur la chaîne YouTube.
+  // La lecture en cours n'est PAS coupée : télécharger n'est pas quitter un film.
   downloader.on('started', () => {
-    if (browser.isOpen) browser.open();
+    keyboard.close();
+    advisor.close();
+    browser.open(); // recharge le catalogue → la nouvelle entrée apparaît
   });
 
   // Progression → met à jour les tuiles en place (sans re-render).
@@ -398,21 +494,22 @@ function attachMovieHandlers() {
   controls.on('set-subtitles', (lang) => pm.setSubtitleMode(lang));
   // Choix de la piste audio (rangée visible seulement en multi-pistes).
   controls.on('set-audio', (index) => pm.setAudioTrack(index));
-  // Recalage de la synchro des sous-titres (± ms par clic).
-  controls.on('subtitle-offset', (delta) => {
-    const offset = pm.adjustSubtitleOffset(delta);
-    controls.setSubtitleOffsetLabel(offset);
-  });
+
+  // Recalage des sous-titres : réglé en lecture depuis le HUD (± 0,1 s par clic).
+  hud.on('subtitle-offset', (delta) => hud.setOffset(pm.adjustSubtitleOffset(delta)));
 
   // Reflète l'état courant sur les boutons (surlignage ambre).
   pm.on('subtitleModeChanged', (mode) => controls.setSubtitleActive(mode));
-  pm.on('subtitleOffsetChanged', (offset) => controls.setSubtitleOffsetLabel(offset));
+  pm.on('subtitleOffsetChanged', (offset) => hud.setOffset(offset));
   pm.on('fitChanged', (mode) => controls.setFitActive(mode));
-  // Langues de sous-titres disponibles → configure les rangées.
+  // Langues de sous-titres disponibles → configure la rangée et le HUD.
   pm.on('subtitlesAvailable', (langs) => {
     controls.setSubtitlesAvailable(langs);
     controls.setSubtitleActive(pm.subtitleMode);
+    hud.setAvailable(langs.length > 0);
   });
+  // Film arrêté → plus de sous-titres à recaler.
+  pm.on('movieStopped', () => hud.setAvailable(false));
   // Pistes audio → construit la rangée AUDIO (masquée si mono-piste).
   pm.on('audioTracksChanged', (info) => controls.setAudioTracks(info.tracks, info.activeIndex));
   pm.on('audioTrackChanged', (index) => controls.setAudioActive(index));
@@ -441,11 +538,17 @@ function attachMovieHandlers() {
     video.addEventListener('pause', () => {
       if (state.isMovieMode && !video.ended) {
         controls.setFitActive(pm.getFit());
+        controls.setMovieTitle(pm.currentEntry ? pm.currentEntry.title : '');
         controls.show(ratioOf(), video.currentTime, video.duration);
+        hud.hide(); // l'overlay de pause recouvre l'image
       }
     });
     video.addEventListener('play', () => controls.hide());
-    video.addEventListener('ended', () => controls.show(1, video.duration, video.duration));
+    video.addEventListener('ended', () => {
+      controls.setMovieTitle(pm.currentEntry ? pm.currentEntry.title : '');
+      controls.show(1, video.duration, video.duration);
+      hud.hide();
+    });
   }
 }
 
@@ -475,14 +578,16 @@ window.onYouTubeIframeAPIReady = function() {
     width: '400',
     videoId: '6N5e0BQyF9I', //3zyOHgkEaO8
     playerVars: {
-      autoplay: 1,
-      controls: 1,
-      loop: 1,
+      autoplay: 0,      // l'intro est la vidéo LOCALE ; YouTube attend une chaîne
+      controls: 0,      // pas de barre de contrôle (kiosque piloté à la télécommande)
+      disablekb: 1,     // le clavier ne pilote pas YouTube (géré par l'app)
+      fs: 0,            // pas de bouton plein écran
       modestbranding: 1,
+      playsinline: 1,
       color: 'white',
-      iv_load_policy: 3,
+      iv_load_policy: 3, // pas d'annotations
       cc_load_policy: 0,
-      rel: 0,
+      rel: 0,            // pas de vidéos « liées » en fin
     },
     events: {
       onReady: (e) => onPlayerReady(e),
@@ -502,6 +607,21 @@ function onPlayerReady(event) {
   event.target.setPlaybackQuality('hd720');
   disableCaptions(event.target);
   document.body.focus();
+  // L'API peut finir de charger APRÈS l'entrée en mode film : avec autoplay,
+  // YouTube démarrerait alors derrière le film. On le coupe d'emblée.
+  guardYouTubeInMovieMode(event.target);
+}
+
+/**
+ * Garde-fou : si un film est ouvert (mode film), YouTube ne doit JAMAIS jouer.
+ * Appelé à chaque événement du player pour couvrir toutes les courses possibles.
+ */
+function guardYouTubeInMovieMode(player) {
+  if (state.isMovieMode && player && typeof player.pauseVideo === 'function') {
+    player.pauseVideo();
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -518,6 +638,10 @@ function disableCaptions(player) {
  * YouTube player state change callback
  */
 function onPlayerStateChange(event) {
+  // Coupe immédiatement toute tentative de lecture pendant qu'un film est ouvert.
+  if (event.data === YT.PlayerState.PLAYING && guardYouTubeInMovieMode(event.target)) {
+    return;
+  }
   if (event.data === YT.PlayerState.PLAYING) {
     disableCaptions(event.target);
   }

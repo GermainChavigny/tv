@@ -48,7 +48,7 @@ export class MovieDownloader extends EventEmitter {
       <div class="crt-header">
         <span class="crt-title">Search Results</span>
         <span class="crt-meta"></span>
-        <span class="crt-clock-wrap"><span class="crt-clock"></span><span class="crt-date"></span></span>
+        <span class="crt-clock-wrap"><span class="crt-clock"></span><span class="crt-weather"></span><span class="crt-date"></span></span>
       </div>
       <div class="ms-message"></div>
       <div class="ms-body">
@@ -213,6 +213,7 @@ export class MovieDownloader extends EventEmitter {
         tmdbId: movie.tmdbId,
         imdbId: movie.imdbId,
         posterUrl: movie.posterUrl,
+        overview: movie.overview,
       });
       if (res.error) {
         this.messageEl.textContent = res.error;

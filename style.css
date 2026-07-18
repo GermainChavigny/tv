@@ -9,29 +9,63 @@ body {
   overflow: hidden;
 }
 
+/* ============ POLICES RÉTRO (mode film) ============ */
+/* VCR_OSD_MONO : police OSD magnétoscope, cœur de l'UI film (surtout en maj).
+   HomeVideoBold : police « bloc » (lettre évidée sur pavé plein), sans accent
+   ni minuscule → réservée à quelques gros labels ASCII majuscules. */
+@font-face {
+  font-family: "VCR OSD Mono";
+  src: url("fonts/VCR_OSD_MONO.ttf") format("truetype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Home Video Bold";
+  src: url("fonts/HomeVideoBold.ttf") format("truetype");
+  font-display: swap;
+}
+
 /* ============ THÈME « SET-TOP-BOX RÉTRO » (overlays films) ============ */
 /* Palette navy + ambre, monospace système. Dalle fixe 720x576 → unités vw/vh. */
 :root {
   --crt-bg: #001448;
   --crt-bar-bg: #000C2E;
   --crt-panel: #052163;
-  --crt-panel-2: #000f36;
+  --crt-panel-2: #002ab8;
   --crt-border: #D1D7E3;
   --crt-divider: rgba(209, 215, 227, 0.2);
   --crt-text: #D1D7E3;
-  --crt-dim: #97a3bf;
-  --crt-accent: #ECB802;
+  --crt-dim: #b7c0d6;
+  --crt-accent: #ffdd00;
   --crt-accent-ink: #001448;
-  --crt-f1: #5fd35f;
+  --crt-f1: #07ff07;
   --crt-f2: #e6c34d;
   --crt-f3: #59c3e6;
-  --crt-mono: "DejaVu Sans Mono", "Liberation Mono", monospace;
+  /* Police de tout le mode film. DejaVu en repli couvre les glyphes que VCR
+     n'aurait pas (certains accents, symboles ■ ° ← …). */
+  --crt-mono: "VCR OSD Mono", "DejaVu Sans Mono", "Liberation Mono", monospace;
+  /* Police « bloc » décorative, à utiliser avec parcimonie (gros labels ASCII). */
+  --crt-block: "Home Video Bold", "VCR OSD Mono", monospace;
+  /* Marge anti-overscan : une TV cathodique rogne les bords de l'image (~5 %).
+     Rien de lisible ne doit tomber dans cette bande. */
+  --crt-safe-x: 6vw;
+  --crt-safe-y: 3.5vh;
+  /* Ombre portée « épaisse » : plusieurs ombres dures (noir pur, aucun flou)
+     décalées pas à pas vers le bas-droite, empilées pour un bloc plein façon
+     OSD/chaîne météo 90s. */
+  --crt-shadow:
+    0.08vw 0.11vh 0 #000,
+    0.16vw 0.22vh 0 #000,
+    0.24vw 0.33vh 0 #000,
+    0.32vw 0.44vh 0 #000,
+    0.40vw 0.55vh 0 #000;
 }
 
 #dark {
   background-color: #000;
   position: absolute;
-  z-index: 15;
+  /* Voile de luminosité : au-dessus de TOUT (film compris), sous le seul OSD
+     volume (z-index 120). pointer-events:none → n'intercepte aucun clic. */
+  z-index: 110;
   top: 0;
   bottom: 0;
   right: 0;
@@ -106,6 +140,21 @@ body {
   height: 100%;
 }
 
+/* Vidéo d'intro locale : couvre le player YouTube au démarrage. Masquée dès
+   qu'une chaîne ou un film prend le relais. 800x600 = 4:3 → cover sans bande. */
+#intro-player {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background-color: #000;
+}
+
+#intro-player.hidden { display: none; }
+
 
 
 
@@ -144,39 +193,60 @@ body {
 /* ============ COMPOSANTS COMMUNS (en-tête / pied / barre / bouton) ============ */
 /* Look décodeur rétro. La TV cible est en 720x576 → unités vw/vh, cibles larges. */
 
-/* Base commune aux 4 overlays films. */
+/* Base commune aux overlays films. */
 #movie-browser,
 #movie-search,
+#movie-advisor,
 #virtual-keyboard,
-#movie-controls {
+#movie-controls,
+#subtitle-hud,
+#volume-osd {
   font-family: var(--crt-mono);
   color: var(--crt-text);
   /* Rendu « pixel » : pas de lissage des polices (look rétro net). */
   -webkit-font-smoothing: none;
   font-smooth: never;
   text-rendering: optimizeSpeed;
+  text-shadow: var(--crt-shadow);
+  /* Polices pixel mono-graisse : pas de faux-gras synthétique (il bave). Les
+     déclarations font-weight:bold rendent alors la graisse normale, nette. */
+  font-synthesis: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Exception : les titres de film restent sélectionnables (copier/coller). */
+#movie-browser .mb-d-title,
+#movie-search .ms-d-title,
+#movie-advisor .adv-rec-title {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* Scrollbars rétro : grosses barres, aplaties (pas d'arrondi), aux couleurs du thème. */
 #movie-browser ::-webkit-scrollbar,
-#movie-search ::-webkit-scrollbar {
+#movie-search ::-webkit-scrollbar,
+#movie-advisor ::-webkit-scrollbar {
   width: 2vw;
 }
 
 #movie-browser ::-webkit-scrollbar-track,
-#movie-search ::-webkit-scrollbar-track {
+#movie-search ::-webkit-scrollbar-track,
+#movie-advisor ::-webkit-scrollbar-track {
   background: var(--crt-panel-2);
-  border-left: 0.28vw solid var(--crt-border);
+  /*border-left: 0.28vw solid var(--crt-border);*/
 }
 
 #movie-browser ::-webkit-scrollbar-thumb,
-#movie-search ::-webkit-scrollbar-thumb {
+#movie-search ::-webkit-scrollbar-thumb,
+#movie-advisor ::-webkit-scrollbar-thumb {
   background: var(--crt-dim);
   border: 0.28vw solid var(--crt-bg);
 }
 
 #movie-browser ::-webkit-scrollbar-thumb:hover,
-#movie-search ::-webkit-scrollbar-thumb:hover {
+#movie-search ::-webkit-scrollbar-thumb:hover,
+#movie-advisor ::-webkit-scrollbar-thumb:hover {
   background: var(--crt-accent);
 }
 
@@ -185,7 +255,8 @@ body {
   display: flex;
   align-items: baseline;
   gap: 0 2.22vw;
-  padding: 1.74vh 2.78vw;
+  /* Haut/côtés en marge sûre : c'est la zone la plus rognée par le tube. */
+  padding: var(--crt-safe-y) var(--crt-safe-x) 1.74vh;
   background-color: var(--crt-bar-bg);
   border-bottom: 0.28vw solid var(--crt-border);
   text-transform: uppercase;
@@ -194,34 +265,60 @@ body {
 }
 
 .crt-title {
-  font-size: 3.33vw;
+  font-size: 3.61vw;
   font-weight: bold;
   color: #fff;
 }
 
 .crt-meta {
-  font-size: 2.5vw;
+  font-size: 2.64vw;
   color: var(--crt-text);
 }
 
 .crt-clock-wrap {
   margin-left: auto;
-  font-size: 2.5vw;
+  font-size: 2.64vw;
   color: var(--crt-text);
   white-space: nowrap;
 }
 
-.crt-clock-wrap .crt-date { margin-left: 1.67vw; color: var(--crt-dim); }
+.crt-clock-wrap .crt-date { margin-left: 0.83vw; color: var(--crt-dim); }
+
+/* Icône météo (prévision +1h de Tours), entre l'heure et la date. */
+.crt-clock-wrap .crt-weather {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 1.67vw;
+  vertical-align: middle;
+}
+.crt-clock-wrap .crt-weather .wi {
+  width: 3vw;
+  height: 3vw;
+  overflow: visible;
+}
+/* Couleurs des icônes météo (globales : partagées en-tête + popup). */
+.wi { fill: none; stroke: none; }
+.wi-cloud { fill: var(--crt-dim); }
+.wi-sun { fill: var(--crt-accent); }
+.wi-sun-rays { stroke: var(--crt-accent); stroke-width: 2; stroke-linecap: round; }
+.wi-rain { stroke: var(--crt-f3); stroke-width: 2; stroke-linecap: round; }
+.wi-fog { stroke: var(--crt-dim); stroke-width: 2; stroke-linecap: round; }
+.wi-snow { fill: var(--crt-text); }
+.wi-bolt { fill: var(--crt-accent); }
+
+/* L'icône d'en-tête est cliquable (ouvre la popup de prévisions). */
+.crt-clock-wrap { cursor: pointer; }
 
 /* Barre de pied de page : raccourcis (gauche) + actions d'écran (droite). */
 .crt-footer {
   display: flex;
   align-items: center;
   gap: 0 2.78vw;
-  padding: 2.43vh 2.78vw;
+  /* Bas/côtés en marge sûre (voir .crt-header). */
+  padding: 2.08vh var(--crt-safe-x) var(--crt-safe-y);
   background-color: var(--crt-bar-bg);
   border-top: 0.28vw solid var(--crt-border);
-  font-size: 2.36vw;
+  font-size: 2.5vw;
   text-transform: uppercase;
   letter-spacing: 0.08vw;
   color: var(--crt-dim);
@@ -243,7 +340,7 @@ body {
   background: none;
   border: 0;
   font-family: var(--crt-mono);
-  font-size: 2.36vw;
+  font-size: 2.5vw;
   font-weight: bold;
   text-transform: uppercase;
   letter-spacing: 0.08vw;
@@ -257,13 +354,14 @@ body {
 .crt-navbtn .nav-sq { font-size: 0.85em; }
 .crt-navbtn .nav-sq.nav-movies { color: var(--crt-accent); }
 .crt-navbtn .nav-sq.nav-search { color: var(--crt-f1); }
+.crt-navbtn .nav-sq.nav-advisor { color: var(--crt-f3); }
 
 /* Barre de progression simple : fond + remplissage ambre. */
 .crt-bar {
   position: relative;
   height: 1.74vh;
   background-color: var(--crt-panel-2);
-  border: 0.18vw solid var(--crt-border);
+  /*border: 0.18vw solid var(--crt-border);*/
   overflow: hidden;
 }
 
@@ -276,16 +374,21 @@ body {
   background-color: var(--crt-accent);
 }
 
+.mb-row.is-active .crt-bar-fill {
+  background-color: #747aff;
+}
+
 /* Bouton générique ; actif/survolé → surlignage ambre. */
 .crt-btn {
   border: 0.18vw solid var(--crt-border);
   background-color: var(--crt-panel);
   color: var(--crt-text);
   font-family: var(--crt-mono);
-  font-size: 2.5vw;
+  font-size: 2.64vw;
   text-transform: uppercase;
   padding: 1.39vh 1.67vw;
   cursor: pointer;
+  text-shadow: var(--crt-shadow);
   transition: background-color 0.1s, color 0.1s;
 }
 
@@ -293,6 +396,7 @@ body {
 .crt-btn.is-active {
   background-color: var(--crt-accent);
   color: var(--crt-accent-ink);
+  text-shadow: none;
   border-color: var(--crt-accent);
 }
 
@@ -315,7 +419,8 @@ body {
   position: absolute;
   z-index: 20;
   inset: 0;
-  background-color: var(--crt-bg);
+  /*background-color: var(--crt-bg);*/
+  background: linear-gradient(359deg, #000219, #000f76);
   display: none;
   flex-direction: column;
   overflow: hidden;
@@ -329,47 +434,66 @@ body {
   min-height: 0;
 }
 
-/* Colonne liste (gauche) — plus large que le détail. */
+/* Colonne liste (gauche) — plus large que le détail.
+   Bord gauche = bord de l'écran → padding en marge sûre de ce côté. */
 #movie-browser .mb-list {
   flex: 1 1 66%;
   overflow-y: auto;
-  padding: 1.04vh 1.11vw;
+  padding: 1.04vh 1.11vw 1.04vh var(--crt-safe-x);
   border-right: 0.42vw solid var(--crt-border);
 }
 
 /* Ligne : caret · titre (1fr) · barre segmentée (à droite, même ligne). */
 #movie-browser .mb-row {
   display: grid;
-  grid-template-columns: 1.9vw 1fr 30%;
+  grid-template-columns: 1fr 30%;
   align-items: center;
   gap: 0 1.39vw;
-  padding: 1.55vh 1.11vw;
+  padding: 1.1vh 1.11vw;
   cursor: pointer;
   border-bottom: 0.28vw solid var(--crt-divider);
+}
+
+/* Caret + titre : le caret est dans le flux, donc masqué il rend sa place au
+   titre (qui se cale à gauche) au lieu d'une colonne vide. */
+#movie-browser .mb-row-main {
+  display: flex;
+  align-items: center;
+  gap: 0 1vw;
+  min-width: 0;
 }
 
 #movie-browser .mb-row.is-active {
   background-color: var(--crt-accent);
   color: var(--crt-accent-ink);
+  text-shadow: none;
   border-bottom-color: transparent;
 }
 
 #movie-browser .mb-row .mb-caret {
+  flex: 0 0 auto;
   font-weight: bold;
-  visibility: hidden;
+  display: none; /* masqué : rend sa place au titre (pas de colonne vide) */
+  font-size: 2.6vw;
 }
 
-#movie-browser .mb-row.is-active .mb-caret { visibility: visible; }
+#movie-browser .mb-row.is-active .mb-caret { display: inline; }
 
+/* Titre : jusqu'à 2 lignes, interligne serré ; ellipse au-delà. */
 #movie-browser .mb-row-title {
   font-size: 2.64vw;
+  font-weight: bold;
+  line-height: 1.05;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 #movie-browser .mb-row-status {
-  font-size: 2.08vw;
+  font-size: 2.22vw;
   text-align: right;
   white-space: nowrap;
   color: var(--crt-f3);
@@ -378,35 +502,21 @@ body {
 #movie-browser .mb-row.is-error .mb-row-status { color: #e07a7a; }
 
 #movie-browser .mb-row-pct {
-  font-size: 2.36vw;
+  font-size: 2.5vw;
   text-align: right;
   white-space: nowrap;
 }
 
 /* Barre segmentée : cellules à contour, remplies jusqu'au ratio. */
-.seg {
-  display: flex;
-  gap: 0 0.42vw;
-  align-items: center;
-  height: 2.6vh;
+/* Barre de progression dans la liste : piste bleu foncé, remplissage ambre. */
+#movie-browser .mb-bar { height: 2.2vh; }
+
+/* Ligne sélectionnée (fond ambre) : piste bleu foncé encadrée d'encre sombre
+   pour rester lisible ; le remplissage reste ambre. */
+#movie-browser .mb-row.is-active .mb-bar {
+  border-color: var(--crt-accent-ink);
+  background-color: var(--crt-bg);
 }
-
-.seg i {
-  flex: 1 1 0;
-  height: 100%;
-  border: 0.18vw solid var(--crt-text);
-  background: transparent;
-}
-
-.seg i.on { background: var(--crt-text); }
-
-/* Sur la ligne sélectionnée (fond jaune) : blocs et contours en encre sombre. */
-#movie-browser .mb-row.is-active .seg i { border-color: var(--crt-accent-ink); }
-#movie-browser .mb-row.is-active .seg i.on { background: var(--crt-accent-ink); }
-
-/* Barre bleutée pour un film en cours de téléchargement/conversion. */
-#movie-browser .mb-row.is-busy .seg i { border-color: var(--crt-f3); }
-#movie-browser .mb-row.is-busy .seg i.on { background: var(--crt-f3); }
 
 /* Volet détail (droite) : contenu aligné à gauche, affiche centrée, plus étroit. */
 #movie-browser .mb-detail {
@@ -414,9 +524,14 @@ body {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  padding: 2.08vh 1.94vw;
+  /* Bord droit = bord de l'écran → padding en marge sûre de ce côté. */
+  padding: 2.08vh var(--crt-safe-x) 2.08vh 1.94vw;
   overflow-y: auto;
 }
+
+/* Les enfants gardent leur taille : le volet DÉFILE au lieu de comprimer ses
+   éléments (sinon le titre en line-clamp s'écrase quand la description déborde). */
+#movie-browser .mb-detail > * { flex: 0 0 auto; }
 
 #movie-browser .mb-detail.is-empty { justify-content: center; text-align: center; color: var(--crt-dim); }
 
@@ -451,11 +566,19 @@ body {
 
 #movie-browser .mb-d-prog {
   margin-top: 1.74vh;
-  font-size: 2.36vw;
+  font-size: 2.5vw;
   color: var(--crt-text);
 }
 
-#movie-browser .mb-d-prog .seg { margin-top: 0.7vh; }
+/* display:block indispensable : .crt-bar est un <span> ; inline, sa hauteur
+   serait ignorée (dans les lignes de la liste c'est un grid-item, déjà blockifié). */
+#movie-browser .mb-bar { display: block; }
+#movie-browser .mb-d-prog .mb-bar { margin-top: 0.9vh; height: 2.4vh; }
+
+/* Couleur de la barre selon l'état : téléchargement (cyan) vs conversion (vert),
+   distincts de l'ambre de la progression de lecture. */
+#movie-browser .mb-bar--download .crt-bar-fill { background-color: var(--crt-f3); }
+#movie-browser .mb-bar--convert .crt-bar-fill { background-color: var(--crt-f1); }
 
 #movie-browser .mb-d-actions {
   display: flex;
@@ -465,11 +588,21 @@ body {
   flex: 0 0 auto;
 }
 
+/* Description du film, sous les boutons ; défile avec tout le volet. */
+#movie-browser .mb-d-overview {
+  flex: 0 0 auto;
+  margin-top: 1.74vh;
+  font-size: 2.22vw;
+  color: var(--crt-text);
+  line-height: 1.35;
+}
+
 #movie-browser .mb-d-actions .crt-btn { width: 100%; text-align: center; }
 
 #movie-browser .mb-play {
   background-color: var(--crt-accent);
   color: var(--crt-accent-ink);
+  text-shadow: none;
   border-color: var(--crt-accent);
   font-weight: bold;
 }
@@ -501,40 +634,54 @@ body {
   display: flex;
   align-items: center;
   gap: 0 2.22vw;
-  padding: 1.74vh 2.78vw 0;
+  padding: var(--crt-safe-y) var(--crt-safe-x) 4.22vw;
   flex: 0 0 auto;
 }
 
-#movie-controls .mc-paused {
-  font-size: 3.06vw;
-  font-weight: bold;
-  color: var(--crt-accent);
-  text-transform: uppercase;
-  letter-spacing: 0.1vw;
+/* Nom du film en pause : haut-droite, jaune, typographie normale (pas le block
+   font). margin-left auto → poussé à droite ; mc-head gère la marge sûre. */
+#movie-controls .mc-title {
+font-size: 3vw;
+    font-weight: bold;
+    color: var(--crt-accent);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
 }
 
-#movie-controls .mc-time {
-  margin-left: auto;
-  font-size: 2.5vw;
-  color: var(--crt-text);
-}
-
-/* Barre de progression cliquable, EN BAS (sous les réglages), plus haute. */
-#movie-controls .mc-seekbar {
-  height: 4.5vh;
-  margin: 0 2.78vw 1.74vh;
-  cursor: pointer;
-  flex: 0 0 auto;
-}
-
-/* Corps : rangées de réglages centrées. */
-#movie-controls .mc-body {
+/* Bloc horodatage + barre, centré verticalement dans l'espace entre la
+   dernière rangée de réglages et le bas de l'écran. */
+#movie-controls .mc-seek-wrap {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   justify-content: center;
+  gap: 1.2vh 0;
+  padding: 0 var(--crt-safe-x) var(--crt-safe-y);
+}
+
+#movie-controls .mc-time {
+  font-size: 2.5vw;
+  color: var(--crt-text);
+  text-align: center;
+}
+
+/* Barre de progression cliquable, sous l'horodatage. */
+#movie-controls .mc-seekbar {
+  height: 5.5vh;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+/* Corps : rangées de réglages en haut (l'espace du bas revient à la barre). */
+#movie-controls .mc-body {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
   gap: 2.43vh 0;
-  padding: 1.74vh 2.78vw;
+  padding: 2.43vh var(--crt-safe-x) 0;
 }
 
 #movie-controls .mc-row {
@@ -545,7 +692,7 @@ body {
 
 #movie-controls .mc-row .mc-label {
   flex: 0 0 30vw;
-  font-size: 2.36vw;
+  font-size: 2.5vw;
   color: var(--crt-dim);
   text-transform: uppercase;
 }
@@ -553,16 +700,51 @@ body {
 /* Bouton « cycle » : largeur mini pour ne pas sauter quand la valeur change. */
 #movie-controls .mc-cycle { min-width: 22vw; text-align: center; }
 
-/* Décalage : valeur courante centrée entre les deux boutons ±. */
-#movie-controls .mc-offset-val {
-  min-width: 12vw;
-  text-align: center;
-  font-size: 2.64vw;
-  color: var(--crt-text);
+#movie-controls .mc-btn { flex: 0 0 auto; }
+#movie-controls .mc-row .mc-btn { font-size: 2.5vw; }
+
+/* ============ HUD DE RECALAGE DES SOUS-TITRES (coin haut-droit, en lecture) ============ */
+/* Apparaît au mouvement de la souris pendant la lecture, s'efface après ~3 s.
+   Le film continue de tourner : on juge le décalage en direct. */
+
+#subtitle-hud {
+  position: absolute;
+  z-index: 30;
+  top: var(--crt-safe-y);
+  right: var(--crt-safe-x);
+  display: none;
+  align-items: center;
+  gap: 0 1.11vw;
+  padding: 1.39vh 1.67vw;
+  background-color: var(--crt-bar-bg);
+  border: 0.28vw solid var(--crt-border);
 }
 
-#movie-controls .mc-btn { flex: 0 0 auto; }
-#movie-controls .mc-row .mc-btn { font-size: 2.36vw; }
+#subtitle-hud.open { display: flex; }
+
+#subtitle-hud .sh-label {
+  font-size: 2.36vw;
+  color: var(--crt-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08vw;
+}
+
+/* Boutons ± : carrés, cible large malgré le libellé d'un seul caractère. */
+#subtitle-hud .sh-btn {
+  min-width: 5vw;
+  padding: 0.7vh 0;
+  font-size: 3.06vw;
+  line-height: 1;
+  text-align: center;
+}
+
+#subtitle-hud .sh-val {
+  min-width: 9vw;
+  text-align: center;
+  font-size: 2.64vw;
+  font-weight: bold;
+  color: var(--crt-accent);
+}
 
 /* ============ CLAVIER VIRTUEL (curseur, disposition AZERTY inchangée) ============ */
 
@@ -583,11 +765,11 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 1.74vh 4vw;
+  padding: 1.74vh var(--crt-safe-x);
 }
 
 #virtual-keyboard .vk-prompt {
-  font-size: 2.36vw;
+  font-size: 2.5vw;
   color: var(--crt-dim);
   text-transform: uppercase;
   margin-bottom: 0.7vh;
@@ -619,6 +801,17 @@ body {
   margin-bottom: 1.04vh;
 }
 
+/* Touches lettres/chiffres : largeur FIXE (grille de 10 colonnes), donc toutes
+   identiques. Rangées justifiées à gauche → la dernière ligne (w x c v b n) se
+   cale à gauche au lieu de s'étirer. La rangée d'actions garde son propre style. */
+#virtual-keyboard .vk-row:not(.vk-actions) {
+  justify-content: flex-start;
+}
+#virtual-keyboard .vk-row:not(.vk-actions) .vk-key {
+  flex: 0 0 calc((100% - 9 * 0.83vw) / 10);
+  box-sizing: border-box;
+}
+
 #virtual-keyboard .vk-key {
   flex: 1 1 0;
   min-width: 0;
@@ -628,14 +821,17 @@ body {
   background-color: var(--crt-panel);
   color: var(--crt-text);
   font-family: var(--crt-mono);
+  font-weight: bold;
   cursor: pointer;
   text-transform: uppercase;
+  text-shadow: var(--crt-shadow);
   transition: background-color 0.1s, color 0.1s;
 }
 
 #virtual-keyboard .vk-key:hover {
   background-color: var(--crt-accent);
   color: var(--crt-accent-ink);
+  text-shadow: none;
   border-color: var(--crt-accent);
 }
 
@@ -644,7 +840,6 @@ body {
 }
 
 #virtual-keyboard .vk-actions .vk-key {
-  text-transform: none;
   font-size: 2.5vw;
   flex-grow: 2;
 }
@@ -652,6 +847,7 @@ body {
 #virtual-keyboard .vk-submit {
   background-color: var(--crt-accent);
   color: var(--crt-accent-ink);
+  text-shadow: none;
   border-color: var(--crt-accent);
   flex-grow: 3 !important;
 }
@@ -672,7 +868,7 @@ body {
 #movie-search.open { display: flex; }
 
 /* flex:1 → occupe la place restante pour garder le pied de page tout en bas. */
-#movie-search .ms-message { flex: 1 1 auto; padding: 2.08vh 2.78vw; font-size: 2.36vw; color: var(--crt-dim); }
+#movie-search .ms-message { flex: 1 1 auto; padding: 2.08vh var(--crt-safe-x); font-size: 2.5vw; color: var(--crt-dim); }
 
 /* Corps : liste (gauche) + volet détail (droite), comme la bibliothèque. */
 #movie-search .ms-body {
@@ -681,10 +877,11 @@ body {
   min-height: 0;
 }
 
+/* Bord gauche = bord de l'écran → padding en marge sûre de ce côté. */
 #movie-search .ms-list {
   flex: 1 1 60%;
   overflow-y: auto;
-  padding: 1.04vh 1.11vw;
+  padding: 1.04vh 1.11vw 1.04vh var(--crt-safe-x);
   border-right: 0.42vw solid var(--crt-border);
 }
 
@@ -694,7 +891,7 @@ body {
   border-bottom: 0.28vw solid var(--crt-divider);
 }
 
-#movie-search .ms-row.is-active { background-color: var(--crt-accent); color: var(--crt-accent-ink); border-bottom-color: transparent; }
+#movie-search .ms-row.is-active { background-color: var(--crt-accent); color: var(--crt-accent-ink); text-shadow: none; border-bottom-color: transparent; }
 
 #movie-search .ms-r-title {
   font-size: 2.64vw;
@@ -703,16 +900,16 @@ body {
   white-space: nowrap;
 }
 /* Sous-ligne : année · taille · seeders. */
-#movie-search .ms-r-sub { font-size: 2.08vw; color: var(--crt-dim); margin-top: 0.3vh; }
-#movie-search .ms-row.is-active .ms-r-sub { color: var(--crt-accent-ink); }
+#movie-search .ms-r-sub { font-size: 2.22vw; color: var(--crt-dim); margin-top: 0.3vh; }
+#movie-search .ms-row.is-active .ms-r-sub { color: var(--crt-accent-ink); text-shadow: none; }
 
-/* Volet détail (droite). */
+/* Volet détail (droite) — bord droit en marge sûre. */
 #movie-search .ms-detail {
   flex: 1 1 40%;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  padding: 2.08vh 1.94vw;
+  padding: 2.08vh var(--crt-safe-x) 2.08vh 1.94vw;
   overflow-y: auto;
 }
 
@@ -739,10 +936,10 @@ body {
 }
 
 #movie-search .ms-d-year { font-size: 2.5vw; color: var(--crt-text); margin-top: 0.5vh; }
-#movie-search .ms-d-specs { font-size: 2.22vw; color: var(--crt-f3); margin-top: 0.7vh; }
+#movie-search .ms-d-specs { font-size: 2.36vw; color: var(--crt-f3); margin-top: 0.7vh; }
 
 #movie-search .ms-d-overview {
-  font-size: 2.08vw;
+  font-size: 2.22vw;
   color: var(--crt-text);
   margin-top: 1.04vh;
   line-height: 1.35;
@@ -755,6 +952,7 @@ body {
   font-weight: bold;
   background-color: var(--crt-accent);
   color: var(--crt-accent-ink);
+  text-shadow: none;
   border-color: var(--crt-accent);
   flex: 0 0 auto;
 }
@@ -763,5 +961,622 @@ body {
 
 /* Un film pas encore prêt : libellé d'état à la place du %, remplissage cyan. */
 #movie-browser .mb-row.is-busy { cursor: default; }
-#movie-browser .mb-row.is-busy .mb-row-pct { color: var(--crt-f3); font-size: 2.08vw; }
+#movie-browser .mb-row.is-busy .mb-row-pct { color: var(--crt-f3); font-size: 2.22vw; }
 #movie-browser .mb-row.is-error .mb-row-pct { color: #e07a7a; }
+
+/* ============ MOVIE ADVISOR (critères + picker + recommandations) ============ */
+/* Un seul overlay, deux axes : [data-view] pour critères↔recos, .picking pour le
+   modal. Dalle 720x576 → largeur utile 90vw (648px), corps 458px sous l'en-tête
+   et le pied. Toutes les tailles ci-dessous sont calées sur ce budget. */
+
+#movie-advisor {
+  position: absolute;
+  z-index: 25; /* > #movie-browser (20), < #movie-controls (30) */
+  inset: 0;
+  /*background-color: var(--crt-bg);*/
+  background: linear-gradient(359deg, #000219, #000f76);
+  display: none;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#movie-advisor.open { display: flex; }
+
+/* Les vues sont mutuellement exclusives ; l'en-tête et le pied restent communs.
+   Tout l'affichage se pilote ici, JAMAIS par un style en ligne : un
+   `style.display` poserait une valeur qui l'emporterait sur ces règles et
+   laisserait deux vues superposées. */
+#movie-advisor .adv-view { flex: 1 1 auto; min-height: 0; display: none; }
+#movie-advisor[data-view="criteria"] .adv-criteria { display: flex; }
+#movie-advisor[data-view="recs"] .adv-recs { display: grid; }
+#movie-advisor[data-view="criteria"] .adv-back { display: none; }
+
+/* Message (chargement / erreur) À LA PLACE de la grille de recommandations. */
+#movie-advisor .adv-msg {
+  flex: 1 1 auto;
+  display: none;
+  padding: 2.08vh var(--crt-safe-x);
+  font-size: 2.5vw;
+  color: var(--crt-dim);
+}
+
+#movie-advisor.is-msg[data-view="recs"] .adv-recs { display: none; }
+#movie-advisor.is-msg[data-view="recs"] .adv-msg { display: block; }
+
+/* ---- VUE A : critères ---- */
+
+#movie-advisor .adv-criteria {
+  gap: 0 2vw;
+  padding: 1.6vh var(--crt-safe-x);
+}
+
+/* Panneau du critique (décoratif) : 24vw = 172.8px. */
+#movie-advisor .adv-critic {
+  flex: 0 0 24vw;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#movie-advisor .adv-photo {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border: 0.32vw solid var(--crt-border);
+  background-color: var(--crt-panel);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+#movie-advisor .adv-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  image-rendering: pixelated; /* look 90s assumé */
+}
+
+/* Photo absente/404 : le cadre garde sa place, fond panel (cf. .no-poster). */
+#movie-advisor .adv-photo.no-poster img { visibility: hidden; }
+
+#movie-advisor .adv-name {
+  margin-top: 1.2vh;
+  font-size: 2.6vw;
+  font-weight: bold;
+  color: #fff;
+}
+
+#movie-advisor .adv-role {
+  margin-top: 0.3vh;
+  font-size: 1.9vw;
+  color: var(--crt-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08vw;
+}
+
+#movie-advisor .adv-quote {
+  flex: 0 1 auto; /* hauteur naturelle : le bouton se centre dans l'espace restant */
+  min-height: 0;
+  overflow: hidden;
+  margin-top: 1.6vh;
+  padding-top: 1.2vh;
+  border-top: 0.28vw solid var(--crt-divider);
+  font-size: 1.9vw;
+  line-height: 1.35;
+  color: var(--crt-f2);
+}
+
+/* Champ libre ajouté au prompt : centré verticalement dans l'espace entre la
+   citation et le bas de la colonne (margin auto), gros bouton lisible. */
+#movie-advisor .adv-keywords {
+  flex: 0 0 auto;
+  margin: auto 0;
+  width: 100%;
+  padding: 3.3vh 0.9vw;
+  font-size: 2.6vw;
+  text-transform: none;
+  color: var(--crt-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+/* Renseigné : contour + texte ambre pour signaler qu'il agit sur la recherche. */
+#movie-advisor .adv-keywords.is-set {
+  color: var(--crt-accent);
+  border-color: var(--crt-accent);
+}
+
+#movie-advisor .adv-keywords:hover {
+  background-color: var(--crt-accent);
+  color: var(--crt-accent-ink);
+  border-color: var(--crt-accent);
+  text-shadow: none;
+}
+
+#movie-advisor .adv-col {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.6vh 0;
+}
+
+/* grid-auto-rows: 1fr → les 8 boutons ont STRICTEMENT la même taille. */
+#movie-advisor .adv-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: 1fr;
+  gap: 1.2vh 1vw;
+}
+
+#movie-advisor .adv-crit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4vh 0;
+  padding: 0 1vw;
+  overflow: hidden;
+}
+
+#movie-advisor .adv-crit-name {
+  font-size: 2vw;
+  color: var(--crt-dim);
+  letter-spacing: 0.06vw;
+}
+
+#movie-advisor .adv-crit-val {
+  font-size: 2.5vw;
+  font-weight: bold;
+  color: var(--crt-accent);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Survol = encre sombre sur ambre : les deux lignes doivent suivre. */
+#movie-advisor .adv-crit:hover .adv-crit-name,
+#movie-advisor .adv-crit:hover .adv-crit-val {
+  color: var(--crt-accent-ink);
+  text-shadow: none;
+}
+
+#movie-advisor .adv-actions {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 1vw;
+}
+
+#movie-advisor .adv-actions .crt-btn {
+  padding: 2.2vh 0;
+  font-size: 3vw;
+  font-weight: bold;
+}
+
+#movie-advisor .adv-go {
+  background-color: var(--crt-accent);
+  color: var(--crt-accent-ink);
+  text-shadow: none;
+  border-color: var(--crt-accent);
+}
+
+/* ---- VUE B : picker modal ---- */
+/* .adv-modal est à la fois le fond assombri et le conteneur de centrage. Dernier
+   enfant de l'overlay → passe au-dessus sans z-index. Il couvre l'en-tête et le
+   pied : le picker est modal, [Movies]/[Search] ne doivent pas être cliquables. */
+
+#movie-advisor .adv-modal {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: var(--crt-safe-y) var(--crt-safe-x);
+  box-sizing: border-box;
+  background-color: rgba(0, 0, 0, 0.72);
+}
+
+#movie-advisor.picking .adv-modal { display: flex; }
+
+#movie-advisor .adv-picker {
+  --pk-cols: 3;
+  --pk-row: 9.5vh;
+  width: 100%; /* largeur stable quel que soit le critère (grille 1fr) */
+  max-height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 1.6vh 1.4vw;
+  background-color: var(--crt-panel-2);
+  border: 0.42vw solid var(--crt-border);
+}
+
+/* <= 4 options → 2 colonnes, boutons plus gros. */
+#movie-advisor .adv-picker.is-compact { --pk-cols: 2; --pk-row: 11vh; }
+
+#movie-advisor .adv-pk-head {
+  flex: 0 0 auto;
+  font-size: 2.8vw;
+  font-weight: bold;
+  color: var(--crt-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.1vw;
+  padding-bottom: 1.2vh;
+  margin-bottom: 1.4vh;
+  border-bottom: 0.28vw solid var(--crt-border);
+}
+
+/* grid-auto-rows en hauteur FIXE : 1fr s'effondrerait en cas de dépassement. */
+#movie-advisor .adv-pk-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(var(--pk-cols), 1fr);
+  grid-auto-rows: var(--pk-row);
+  gap: 1vh 0.8vw;
+}
+
+#movie-advisor .adv-opt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.6vw;
+  font-size: 2.2vw;
+  letter-spacing: 0.04vw;
+  overflow: hidden;
+}
+
+/* « Any » : mis en évidence (contour ambre) SANS être marqué sélectionné. */
+#movie-advisor .adv-opt.is-any {
+  border-color: var(--crt-accent);
+  color: var(--crt-accent);
+}
+
+/* Sélection (et survol de Any) : remplissage ambre + encre sombre.
+   Déclaré après .is-any → l'emporte quand Any est la valeur courante. */
+#movie-advisor .adv-opt.is-any:hover,
+#movie-advisor .adv-opt.is-active {
+  background-color: var(--crt-accent);
+  color: var(--crt-accent-ink);
+  border-color: var(--crt-accent);
+  text-shadow: none;
+}
+
+/* ---- VUE C : recommandations ---- */
+/* repeat(3, 1fr) → 3 colonnes de largeur exactement égale : (90 - 2*1.5) / 3 = 29vw. */
+
+#movie-advisor .adv-recs {
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0 1.5vw;
+  padding: 1.6vh var(--crt-safe-x);
+  align-items: stretch;
+}
+
+#movie-advisor .adv-rec {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 0;
+  text-align: center;
+}
+
+#movie-advisor .adv-rec.is-empty {
+  justify-content: center;
+  color: var(--crt-dim);
+  font-size: 2.2vw;
+}
+
+#movie-advisor .adv-rec-poster {
+  width: 16vw;
+  aspect-ratio: 2 / 3;
+  border: 0.32vw solid var(--crt-accent);
+  background-color: var(--crt-panel);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+#movie-advisor .adv-rec-poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#movie-advisor .adv-rec-poster.no-poster img { visibility: hidden; }
+
+/* Hauteur figée à 2 lignes (2 × 2.4vw × 1.2) : un titre court et un titre long
+   réservent la même place, donc les boutons s'alignent d'une colonne à l'autre. */
+#movie-advisor .adv-rec-title {
+  flex: 0 0 auto;
+  margin-top: 0.9vh;
+  height: 5.76vw;
+  font-size: 2.4vw;
+  font-weight: bold;
+  color: var(--crt-accent);
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+#movie-advisor .adv-rec-year {
+  flex: 0 0 auto;
+  margin-top: 0.3vh;
+  font-size: 2.2vw;
+  line-height: 1.2;
+  color: var(--crt-dim);
+}
+
+#movie-advisor .adv-rec-acts {
+  flex: 0 0 auto;
+  margin-top: 1vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7vh 0;
+}
+
+#movie-advisor .adv-rec-acts .crt-btn {
+  width: 100%;
+  padding: 1.3vh 0;
+  font-size: 2.4vw;
+  text-align: center;
+}
+
+#movie-advisor .adv-rec-go {
+  background-color: var(--crt-accent);
+  color: var(--crt-accent-ink);
+  text-shadow: none;
+  border-color: var(--crt-accent);
+  font-weight: bold;
+}
+
+/* Seul élément compressible de la colonne : il prend la place restante et
+   DÉFILE si le résumé est trop long. Pas de troncature à N lignes : selon les
+   coupures de mots, 140 caractères tiennent tantôt sur 6 lignes tantôt sur 7 —
+   aucun budget fixe n'est fiable. Affiche, titre, année et boutons restent en
+   flex: 0 0 auto et ne sont donc jamais compressés. */
+#movie-advisor .adv-rec-sum {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 0.9vh;
+  font-size: 1.95vw;
+  line-height: 1.3;
+  color: var(--crt-text);
+  text-align: left;
+}
+
+/* ============ EFFET DE CHARGEMENT RÉTRO (fondu échelonné) ============ */
+/* Chaque élément d'un écran « se dessine » à l'ouverture (voir RetroFx.js).
+   both = reste visible après l'animation, même si le délai est long. */
+@keyframes crt-reveal {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ============ OSD VOLUME (rectangles verts, style TV 90s) ============ */
+/* Superposé par-dessus tout (film ou YouTube), s'efface après ~1,4 s. */
+#volume-osd {
+  position: absolute;
+  z-index: 120; /* au-dessus de tous les overlays films */
+  left: 50%;
+  bottom: 12vh;
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.4vh 0;
+  padding: 2.2vh 3vw;
+  /*background-color: rgba(0, 6, 20, 0.86);*/
+  /*border: 0.28vw solid var(--crt-border);*/
+  background-color: black;
+  font-family: var(--crt-mono);
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+  text-rendering: optimizeSpeed;
+}
+
+#volume-osd.open { display: flex; }
+
+#volume-osd .vol-label {
+  font-family: var(--crt-block); /* label OSD « bloc », majuscules ASCII */
+  font-size: 3.2vw;
+  font-weight: bold;
+  letter-spacing: 0.4vw;
+  color: var(--crt-f1);
+  text-transform: uppercase;
+  text-shadow: var(--crt-shadow);
+}
+
+/* Rangée de petits rectangles : éteints (sombres) → allumés (verts). */
+#volume-osd .vol-bar {
+  display: flex;
+  gap: 0 1.6vw;
+  align-items: flex-end;
+}
+
+#volume-osd .vol-seg {
+  width: 1vw;
+  height: 5vh;
+  background-color: #00ff4000;
+  /*border: 0.14vw solid #0f3d1c;*/
+}
+
+#volume-osd .vol-seg.on {
+  background-color: var(--crt-f1);
+  border-color: var(--crt-f1);
+  box-shadow: 0 0 0.6vw rgba(95, 211, 95, 0.6);
+}
+
+/* ============ POPUP MÉTÉO (look chaîne météo câblée 90s) ============ */
+/* S'ouvre au clic sur l'icône/date d'un en-tête. Panneaux bleus dégradés,
+   cadre orange, gros chiffres — hommage à The Weather Channel. */
+#weather-popup {
+  position: absolute;
+  z-index: 100; /* au-dessus des overlays films, sous luminosité (110) et volume (120) */
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: var(--crt-safe-y) var(--crt-safe-x);
+  box-sizing: border-box;
+  background-color: rgba(0, 0, 0, 0.62);
+  font-family: var(--crt-mono);
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+  text-rendering: optimizeSpeed;
+  font-synthesis: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#weather-popup.open { display: flex; }
+
+/* Cadre orange dégradé encadrant l'intérieur bleu nuit. */
+#weather-popup .wp-frame {
+  width: 100%;
+  max-width: 81vw;
+  padding: 3vw;
+  background: linear-gradient(#37167f, #f5660f);
+  box-shadow: 0 0 0 0.28vw #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 2vh 0;
+}
+/* En-tête : badge · titre · horloge. */
+#weather-popup .wp-head {
+  display: flex;
+  align-items: center;
+  gap: 0 1.5vw;
+  padding: 0.6vh 1vw;
+  color: #fff;
+}
+
+#weather-popup .wp-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+  padding: 0.7vh 1vw;
+  background-color: #fff;
+  color: #10328c;
+  font-weight: bold;
+  font-size: 2.4vw;
+  letter-spacing: 0.05vw;
+  border-radius: 0.6vw;
+}
+#weather-popup .wp-badge b { 
+  font-size: 1.2vw;
+  font-weight: bold;
+  letter-spacing: 0.1vw;
+}
+
+#weather-popup .wp-title {
+  flex: 1 1 auto;
+  font-size: 2.5vw;
+  font-weight: bold;
+  color: var(--crt-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.06vw;
+  line-height: 1.15;
+  text-shadow: var(--crt-shadow);
+}
+
+#weather-popup .wp-title span {
+  color: white;
+}
+
+#weather-popup .wp-clock {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: 2.5vw;
+  color: #fff;
+  white-space: nowrap;
+  cursor: default;
+  text-align: right;
+  text-shadow: var(--crt-shadow);
+}
+#weather-popup .wp-clock .crt-date { 
+  display: block; 
+  color: #c4c4c4; 
+  font-size: 2.5vw;
+}
+
+/* Trois panneaux d'égale largeur. */
+#weather-popup .wp-panels {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0 2vw;
+}
+
+#weather-popup .wp-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8vh 0;
+  padding: 1.6vh 0.5vw;
+  background: linear-gradient(#7f90ff, #0204fb);
+  border: 0.98vw double #FFFFFF;
+  color: #fff;
+}
+
+#weather-popup .wp-day {
+  font-size: 2.6vw;
+  font-weight: bold;
+  color: var(--crt-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.1vw;
+  text-shadow: var(--crt-shadow);
+}
+
+#weather-popup .wp-icon {
+  filter: drop-shadow(0.2vw 0.2vw 0 rgba(0, 0, 0, 1)) drop-shadow(0.3vw 0.3vw 0 rgba(0, 0, 0, 1));
+}
+
+#weather-popup .wp-icon .wi { width: 11vw; height: 11vw; overflow: visible; }
+
+#weather-popup .wp-cond {
+  font-size: 2.4vw;
+  text-align: center;
+  min-height: 4.6vw;
+  line-height: 1.1;
+  text-shadow: var(--crt-shadow);
+}
+
+#weather-popup .wp-temp {
+  font-size: 4.6vw;
+  font-weight: bold;
+  color: #fff;
+  text-shadow: var(--crt-shadow);
+}
+
+/* Barre de bas : condition du jour + min/max. */
+#weather-popup .wp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1vh 1.4vw;
+  background-color: #0a1330;
+  color: #fff;
+  font-size: 2.3vw;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.06vw;
+}
+#weather-popup .wp-foot .wp-lohi { color: var(--crt-dim); }
+#weather-popup .wp-foot .wp-lohi b { color: var(--crt-accent); }
+
+#weather-popup .wp-msg {
+  grid-column: 1 / -1;
+  padding: 4vh 2vw;
+  text-align: center;
+  color: #fff;
+  font-size: 2.4vw;
+}

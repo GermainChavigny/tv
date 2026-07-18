@@ -4,11 +4,13 @@
  * « PAUSED » + temps, rangées de réglages (chaque catégorie = un bouton qui
  * cycle ses valeurs), et la barre de progression cliquable EN BAS. Tout au curseur.
  *
+ * Le recalage des sous-titres n'est PAS ici : il se règle en lecture via le
+ * HUD du coin haut-droit (voir SubtitleHud.js), pour juger l'effet en direct.
+ *
  * Émet :
  *   'resume'                       reprendre la lecture
  *   'set-fit'      ('contain'|'cover')  letterbox 16:9 ⇄ crop 4:3
  *   'set-subtitles'('fr'|'en'|'off')    langue des sous-titres
- *   'subtitle-offset' (±secondes)       recalage des sous-titres (± 0,1 s)
  *   'set-audio'    (index)              piste audio
  *   'library'                      revenir à la bibliothèque
  *   'seek'         (ratio 0..1)     saut à une position (clic barre)
@@ -28,7 +30,6 @@ export class MovieControls extends EventEmitter {
     this.fitMode = 'contain';
     this.subLangs = [];
     this.subMode = 'off';
-    this.subOffset = 0;
     this.audioTracks = [];
     this.audioIndex = 0;
   }
@@ -38,8 +39,7 @@ export class MovieControls extends EventEmitter {
     root.id = 'movie-controls';
     root.innerHTML = `
       <div class="mc-head">
-        <span class="mc-paused">Paused</span>
-        <span class="mc-time">00:00 / 00:00</span>
+        <span class="mc-title"></span>
       </div>
       <div class="mc-body">
         <div class="mc-row mc-ratio">
@@ -54,29 +54,25 @@ export class MovieControls extends EventEmitter {
           <span class="mc-label">Subtitle Language</span>
           <button class="crt-btn mc-cycle" data-cycle="subs" type="button">None</button>
         </div>
-        <div class="mc-row mc-offset">
-          <span class="mc-label">Subtitle Offset</span>
-          <button class="crt-btn mc-off-btn" data-offset="-0.1" type="button">− 0.1s</button>
-          <span class="mc-offset-val">0.0s</span>
-          <button class="crt-btn mc-off-btn" data-offset="0.1" type="button">+ 0.1s</button>
-        </div>
       </div>
-      <div class="mc-seekbar crt-bar"><div class="mc-seekbar-fill crt-bar-fill"></div></div>
+      <div class="mc-seek-wrap">
+        <span class="mc-time">00:00 / 00:00</span>
+        <div class="mc-seekbar crt-bar"><div class="mc-seekbar-fill crt-bar-fill"></div></div>
+      </div>
       ${footerHtml('<button class="crt-navbtn mc-resume" data-action="resume" type="button">[Resume]</button>')}
     `;
     document.body.appendChild(root);
     this.root = root;
     wireFooterNav(root, this);
+    this.titleEl = root.querySelector('.mc-title');
     this.timeEl = root.querySelector('.mc-time');
     this.seekbar = root.querySelector('.mc-seekbar');
     this.seekFill = root.querySelector('.mc-seekbar-fill');
     this.audioRow = root.querySelector('.mc-audio');
     this.subsRow = root.querySelector('.mc-subs');
-    this.offsetRow = root.querySelector('.mc-offset');
     this.ratioBtn = root.querySelector('[data-cycle="ratio"]');
     this.audioBtn = root.querySelector('[data-cycle="audio"]');
     this.subsBtn = root.querySelector('[data-cycle="subs"]');
-    this.offsetVal = root.querySelector('.mc-offset-val');
 
     // Boutons : délégation unique sur la racine.
     root.addEventListener('click', (e) => {
@@ -87,8 +83,6 @@ export class MovieControls extends EventEmitter {
         this.emit(btn.dataset.action);
       } else if (btn.dataset.cycle) {
         this._cycle(btn.dataset.cycle);
-      } else if (btn.dataset.offset !== undefined) {
-        this.emit('subtitle-offset', parseFloat(btn.dataset.offset));
       }
     });
 
@@ -140,6 +134,11 @@ export class MovieControls extends EventEmitter {
     this.timeEl.textContent = `${fmtTime(elapsed)} / ${fmtTime(duration)}`;
   }
 
+  /** Nom du film affiché en haut à droite de l'overlay de pause. */
+  setMovieTitle(name) {
+    this.titleEl.textContent = name || '';
+  }
+
   /** Reflète le ratio courant sur le bouton (16:9 = letterbox, 4:3 = crop). */
   setFitActive(mode) {
     this.fitMode = mode;
@@ -147,26 +146,18 @@ export class MovieControls extends EventEmitter {
   }
 
   /**
-   * Langues de sous-titres disponibles : masque les rangées s'il n'y en a pas.
-   * @param {string[]} langs  ex. ['fr','en'] ; vide → rangées masquées.
+   * Langues de sous-titres disponibles : masque la rangée s'il n'y en a pas.
+   * @param {string[]} langs  ex. ['fr','en'] ; vide → rangée masquée.
    */
   setSubtitlesAvailable(langs) {
     this.subLangs = langs || [];
-    const has = this.subLangs.length > 0;
-    this.subsRow.style.display = has ? '' : 'none';
-    this.offsetRow.style.display = has ? '' : 'none';
+    this.subsRow.style.display = this.subLangs.length ? '' : 'none';
   }
 
   /** Reflète la langue de sous-titres courante sur le bouton. */
   setSubtitleActive(mode) {
     this.subMode = mode;
     this.subsBtn.textContent = SUB_LABELS[mode] || 'None';
-  }
-
-  /** Affiche le décalage courant entre les deux boutons ±. */
-  setSubtitleOffsetLabel(offset) {
-    this.subOffset = offset || 0;
-    this.offsetVal.textContent = fmtOffset(this.subOffset);
   }
 
   /**
@@ -198,14 +189,6 @@ function fmtTime(sec) {
   const ss = s % 60;
   const pad = (n) => String(n).padStart(2, '0');
   return h ? `${pad(h)}:${pad(m)}:${pad(ss)}` : `${pad(m)}:${pad(ss)}`;
-}
-
-/** 0.3 → "+0.3s" ; 0 → "0.0s" ; -0.2 → "−0.2s". */
-function fmtOffset(o) {
-  const v = Math.round((o || 0) * 10) / 10;
-  if (v > 0) return `+${v.toFixed(1)}s`;
-  if (v < 0) return `−${Math.abs(v).toFixed(1)}s`;
-  return '0.0s';
 }
 
 export default MovieControls;

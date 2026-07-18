@@ -6,10 +6,14 @@ from pathlib import Path
 import requests
 
 import re
+import threading
 import time
 
 from movie_pipeline import Library, JobWorker, atomic_write_json
 from movie_sources import Indexer, Tmdb, Subtitles, load_secrets, clean_torrent_title
+from movie_advisor import (
+    AdvisorError, Advisor, Blacklist, Gemini, OpenAICompatible, clip_summary,
+)
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})  # Allow all origins for all routes
@@ -57,14 +61,57 @@ tmdb = Tmdb(secrets.get('tmdb', {}).get('apiKey'))
 _os = secrets.get('opensubtitles', {})
 subtitles = Subtitles(_os.get('apiKey'), _os.get('username'), _os.get('password'))
 
+# Movie Advisor : chaîne de fournisseurs essayés dans l'ordre (le 1er qui
+# répond gagne), + films écartés via « Forget ». Un fournisseur en panne/quota
+# laisse la place au suivant → filet quand une IA gratuite est indisponible.
+_gem = secrets.get('gemini', {})
+_or = secrets.get('openRouter', {})
+# Gemini en primaire (gratuit et fiable), OpenRouter en repli (modèle gratuit ;
+# json_mode off car ces modèles ne gèrent pas tous le JSON natif). Fallbacks
+# génériques supplémentaires possibles via secrets["advisorFallbacks"].
+_providers = [
+    Gemini(_gem.get('apiKey'), _gem.get('model')),
+    OpenAICompatible('OpenRouter', 'https://openrouter.ai/api/v1', _or.get('apiKey'),
+                     _or.get('model') or 'meta-llama/llama-3.3-70b-instruct:free',
+                     json_mode=False),
+]
+for _fb in secrets.get('advisorFallbacks') or []:
+    _providers.append(OpenAICompatible(
+        _fb.get('name'), _fb.get('baseUrl'), _fb.get('apiKey'),
+        _fb.get('model'), _fb.get('jsonMode', True)))
+advisor = Advisor(_providers)
+blacklist = Blacklist(DATA_DIR)
+
 # Worker de téléchargement/transcodage (1 job à la fois) + reprise post-reboot
 DOWNLOADS_DIR = os.path.join(DATA_DIR, 'downloads')
 worker = JobWorker(library, MOVIES_DIR, DOWNLOADS_DIR, subtitles_fetcher=subtitles)
 worker.resume_pending()
 
+
+def _backfill_overviews():
+    """
+    Complète en arrière-plan le synopsis des films déjà en bibliothèque (ceux
+    téléchargés avant le stockage de l'overview). Un seul passage au démarrage,
+    ne patche que sur succès → les films sans synopsis TMDB retentent au prochain
+    lancement (coût négligeable), pas de faux « vide » définitif.
+    """
+    if not tmdb.available():
+        return
+    for movie_id, entry in library.all().items():
+        if entry.get('overview') or not entry.get('tmdbId'):
+            continue
+        ov = tmdb.overview(entry['tmdbId'])
+        if ov:
+            library.patch(movie_id, {"overview": ov})
+            print(f"[Backfill] Synopsis ajouté : {entry.get('title')}")
+
+
+threading.Thread(target=_backfill_overviews, daemon=True).start()
+
 print(f"[TV App] Indexeurs: {len(secrets.get('indexers') or [])} | "
       f"TMDB: {'oui' if tmdb.available() else 'non'} | "
-      f"OpenSubtitles: {'oui' if subtitles.available() else 'non'}")
+      f"OpenSubtitles: {'oui' if subtitles.available() else 'non'} | "
+      f"Advisor: {', '.join(advisor.names()) or 'non'}")
 
 print(f"[TV App] Data directory: {DATA_DIR}")
 print(f"[TV App] Movies directory: {MOVIES_DIR}")
@@ -189,6 +236,82 @@ def _slugify(title, year=None):
     return f"{slug}-{year}" if year else slug
 
 
+# --- MOVIE ADVISOR : RECOMMANDATIONS IA ---
+
+@app.route('/advisor/recommend', methods=['POST'])
+def advisor_recommend():
+    """
+    Rend 3 recommandations selon les critères choisis.
+    Body : {"criteria": {"mood": "Mystery", "era": "90s", ...}}
+
+    Les exclusions sont montées ici, pas côté client : films écartés via
+    « Forget » + films déjà dans la bibliothèque (le bouton d'une reco sert à
+    la télécharger, donc en proposer une déjà possédée n'a aucun intérêt).
+    """
+    if not advisor.available():
+        return jsonify({"error": "Advisor not configured (no AI API key)"}), 503
+
+    body = request.json or {}
+    criteria = body.get('criteria') or {}
+    keywords = body.get('keywords') or ''
+
+    owned = [e.get('title') for e in library.all().values() if e.get('title')]
+    excluded = sorted(set(blacklist.titles()) | set(owned))
+
+    try:
+        recs = advisor.recommend(criteria, excluded, keywords)
+    except AdvisorError as err:
+        # Le message vient de Google (quota, clé invalide…) : il est montrable
+        # tel quel et évite de faire deviner la cause depuis l'écran.
+        return jsonify({"error": str(err)}), 502
+
+    # Enrichissement TMDB : l'affiche est une URL distante. /poster/<id> ne peut
+    # pas servir ces films (il résout le fichier via la bibliothèque, donc 404
+    # pour un film non possédé) — même mécanisme que les résultats de recherche.
+    out = []
+    for rec in recs:
+        title = rec.get('title')
+        year = rec.get('year')
+        # Match TMDB en fr-FR (le titre de Gemini est français → bon film),
+        # puis titre anglais par id pour la recherche torrent (plus de résultats
+        # que le titre traduit). Repli sur original/affiché si indisponible.
+        meta = tmdb.search(title, year) if tmdb.available() else None
+        english = tmdb.english_title(meta['tmdbId']) if meta else None
+        query = english or (meta or {}).get('originalTitle') or title
+        out.append({
+            "id": _slugify(title, year),
+            "title": title,   # affiché (français, de Gemini)
+            "query": query,   # recherche torrent (anglais)
+            "year": year,
+            "posterUrl": (meta or {}).get('posterUrl'),
+            "summary": clip_summary(rec.get('description')),
+        })
+    return jsonify(out)
+
+
+@app.route('/advisor/forget', methods=['POST'])
+def advisor_forget():
+    """
+    Écarte définitivement un film des recommandations.
+    Body : {"id": "<slug>", "title": "...", "year": 1999}
+    """
+    data = request.json or {}
+    title = data.get('title')
+    if not title:
+        return jsonify({"error": "Missing title"}), 400
+
+    year = data.get('year')
+    entry = {
+        "id": data.get('id') or _slugify(title, year),
+        "title": title,
+        "year": year,
+        "addedAt": int(time.time()),
+    }
+    blacklist.add(entry)
+    print(f"[Advisor] Écarté : {title} ({year})")
+    return jsonify({"status": "ok", "entry": entry})
+
+
 @app.route('/movies/search', methods=['POST'])
 def movies_search():
     """
@@ -268,6 +391,7 @@ def movies_download():
     entry = {
         "id": movie_id, "title": title, "year": year,
         "tmdbId": data.get('tmdbId'), "imdbId": data.get('imdbId'),
+        "overview": data.get('overview'),
         "poster": poster_name, "file": f"{movie_id}.mp4",
         "subtitles": {}, "duration": 0,
         "status": "queued",
@@ -276,7 +400,8 @@ def movies_download():
         "localSource": local_file,
         "addedAt": int(time.time()),
         "currentTime": 0, "watched": False,
-        "subtitleMode": None, "subtitleOffset": 0,
+        # Décalage des sous-titres mémorisé PAR LANGUE (ex. {"fr": 0.3, "en": -0.2}).
+        "subtitleMode": None, "subtitleOffsets": {},
     }
     library.upsert(entry)
     worker.enqueue(movie_id)
@@ -405,6 +530,82 @@ def save_alarm_settings():
 
     print(f"[Alarm] Settings saved: {data}")
     return jsonify({"status": "ok"})
+
+# --- MÉTÉO (proxy Open-Meteo, gratuit et sans clé) ---
+# Tours, France. Open-Meteo ne renvoie pas d'en-tête CORS → on relaie côté
+# serveur (le front n'appelle que notre API). Cache pour ne pas marteler.
+WEATHER_LAT, WEATHER_LON = 47.39, 0.69
+_weather_cache = {"at": 0, "data": None}
+
+
+# Créneaux de la journée (heure locale) affichés dans la popup de prévisions.
+WEATHER_PERIODS = [("Morning", 9), ("Afternoon", 15), ("Evening", 21)]
+
+
+@app.route('/weather', methods=['GET'])
+def weather():
+    """
+    Météo de Tours. Icône d'en-tête (heure suivante) + prévision du jour pour la
+    popup :
+      {
+        "code": <WMO>, "hour": "14:00", "location": "Tours",
+        "day": {"code": <WMO>, "lo": 12, "hi": 24},
+        "periods": [{"label": "Morning", "code": <WMO>, "temp": 15}, ...]
+      }
+    Cache 15 min ; en cas d'échec, dernière valeur connue ou 503.
+    """
+    now = time.time()
+    if _weather_cache["data"] and now - _weather_cache["at"] < 900:
+        return jsonify(_weather_cache["data"])
+
+    try:
+        resp = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": WEATHER_LAT, "longitude": WEATHER_LON,
+                "hourly": "weather_code,temperature_2m",
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min",
+                "timezone": "Europe/Paris", "forecast_days": 2,
+            },
+            timeout=8,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        hourly = payload["hourly"]
+        times, codes, temps = hourly["time"], hourly["weather_code"], hourly["temperature_2m"]
+
+        def at_hour(hour):
+            """Index horaire d'aujourd'hui à `hour`h locale (repli sur 0)."""
+            stamp = time.strftime(f"%Y-%m-%dT{hour:02d}:00", time.localtime(now))
+            return times.index(stamp) if stamp in times else 0
+
+        # Icône d'en-tête : heure locale actuelle + 1.
+        target = time.strftime("%Y-%m-%dT%H:00", time.localtime(now + 3600))
+        idx = times.index(target) if target in times else 0
+
+        periods = [
+            {"label": label, "code": codes[at_hour(h)], "temp": round(temps[at_hour(h)])}
+            for label, h in WEATHER_PERIODS
+        ]
+        daily = payload.get("daily", {})
+        day = {
+            "code": (daily.get("weather_code") or [codes[idx]])[0],
+            "hi": round((daily.get("temperature_2m_max") or [temps[idx]])[0]),
+            "lo": round((daily.get("temperature_2m_min") or [temps[idx]])[0]),
+        }
+        data = {
+            "code": codes[idx], "hour": times[idx][11:16], "location": "Tours",
+            "day": day, "periods": periods,
+        }
+    except (requests.RequestException, ValueError, KeyError, IndexError) as err:
+        print(f"[Weather] Prévision indisponible : {err}")
+        if _weather_cache["data"]:
+            return jsonify(_weather_cache["data"])
+        return jsonify({"error": "Weather unavailable"}), 503
+
+    _weather_cache.update(at=now, data=data)
+    return jsonify(data)
+
 
 # --- HEALTH CHECK ---
 @app.route('/health', methods=['GET'])

@@ -4,8 +4,12 @@
  * (TV basse résolution). Comme la saisie se fait au clic et non par de vrais
  * évènements clavier, il n'entre pas en conflit avec le KeyboardHandler global.
  *
+ * Réutilisable : `open()` accepte un libellé et un « purpose » pour servir aussi
+ * bien la recherche torrent que la saisie de mots-clés du Movie Advisor. Le
+ * purpose (lu par app.js dans le handler 'submit') dit où renvoyer le texte.
+ *
  * Émet :
- *   'submit' (texte)   quand l'utilisateur valide la recherche
+ *   'submit' (texte)   quand l'utilisateur valide la saisie
  *   'close'            quand il ferme le clavier
  */
 
@@ -25,6 +29,7 @@ export class VirtualKeyboard extends EventEmitter {
     this.root = null;
     this.input = '';
     this.isOpen = false;
+    this.purpose = 'search'; // qui a ouvert le clavier (route le 'submit')
   }
 
   init() {
@@ -40,18 +45,18 @@ export class VirtualKeyboard extends EventEmitter {
 
     root.innerHTML = `
       <div class="crt-header">
-        <span class="crt-title">Search</span>
-        <span class="crt-clock-wrap"><span class="crt-clock"></span><span class="crt-date"></span></span>
+        <span class="crt-title"></span>
+        <span class="crt-clock-wrap"><span class="crt-clock"></span><span class="crt-weather"></span><span class="crt-date"></span></span>
       </div>
       <div class="vk-panel">
-        <div class="vk-prompt">Search for:</div>
+        <div class="vk-prompt"></div>
         <div class="vk-display"><span class="vk-text"></span><span class="vk-caret">|</span></div>
         <div class="vk-keys">${keysHtml}</div>
         <div class="vk-row vk-actions">
           <button class="vk-key vk-space" data-action="space" type="button">Space</button>
           <button class="vk-key vk-back" data-action="back" type="button">&larr; Back</button>
           <button class="vk-key vk-clear" data-action="clear" type="button">Clear</button>
-          <button class="vk-key vk-submit" data-action="submit" type="button">Search</button>
+          <button class="vk-key vk-submit" data-action="submit" type="button"></button>
         </div>
       </div>
       ${footerHtml('<button class="crt-navbtn vk-cancel" data-action="cancel" type="button">[Cancel]</button>')}
@@ -59,6 +64,9 @@ export class VirtualKeyboard extends EventEmitter {
     document.body.appendChild(root);
     this.root = root;
     this.textEl = root.querySelector('.vk-text');
+    this.titleEl = root.querySelector('.crt-title');
+    this.promptEl = root.querySelector('.vk-prompt');
+    this.submitEl = root.querySelector('.vk-submit');
 
     wireFooterNav(root, this);
     root.addEventListener('click', (e) => {
@@ -71,8 +79,19 @@ export class VirtualKeyboard extends EventEmitter {
     return this;
   }
 
-  open(initial = '') {
+  /**
+   * Ouvre le clavier.
+   * @param {string} initial  texte pré-rempli
+   * @param {object} opts  { purpose, title, prompt, submitLabel } — libellés
+   *   personnalisables. Les défauts correspondent à la recherche torrent, pour
+   *   que le flux existant (goSearch / résultats) reste inchangé.
+   */
+  open(initial = '', opts = {}) {
     this.input = initial;
+    this.purpose = opts.purpose || 'search';
+    this.titleEl.textContent = opts.title || 'Search';
+    this.promptEl.textContent = opts.prompt || 'Search for:';
+    this.submitEl.textContent = opts.submitLabel || 'Search';
     this.render();
     this.isOpen = true;
     this.root.classList.add('open');

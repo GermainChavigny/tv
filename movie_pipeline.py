@@ -141,6 +141,15 @@ class Transcoder:
         '-movflags', '+faststart',
     ]
 
+    # Vidéo déjà web-compatible (H.264) mais audio non (AC3/DTS…) : on COPIE la
+    # vidéo (pas de ré-encodage coûteux) et on ne convertit que l'audio. Quasi
+    # instantané comparé à un ré-encodage vidéo complet.
+    RECIPE_AUDIO_ONLY = [
+        '-c:v', 'copy',
+        '-c:a', 'aac', '-b:a', '192k',
+        '-movflags', '+faststart',
+    ]
+
     # Langues de sous-titres embarqués à extraire (mkv notamment)
     SUB_LANGS = {'fre': 'fr', 'fra': 'fr', 'fr': 'fr', 'eng': 'en', 'en': 'en'}
 
@@ -264,17 +273,26 @@ class Transcoder:
         return info
 
     def needs_reencode(self, src):
+        """True si le fichier n'est pas directement lisible (vidéo OU audio)."""
+        return self.plan(src) != 'remux'
+
+    def plan(self, src):
         """
-        True s'il faut ré-encoder (codec vidéo/audio non lisible par le web).
-        Un fichier H.264 + AAC/MP3 est jouable tel quel : on se contente alors
-        d'un remux (copie) vers mp4, sans perte ni re-transcodage coûteux.
+        Stratégie de préparation, du moins au plus coûteux :
+          'remux' — H.264 + AAC/MP3 : simple copie des flux (instantané).
+          'audio' — H.264 mais audio AC3/DTS… : copie vidéo + ré-encode AUDIO
+                    seul (rapide ; évite le ré-encodage vidéo, le vrai goulot).
+          'full'  — vidéo non web (HEVC, AVI, MPEG-2…) : ré-encodage complet.
         La résolution n'est PAS un critère : Chromium met à l'échelle à l'affichage.
         """
         info = self.probe_streams(src)
-        return not (
-            info.get('vcodec') in self.WEB_VIDEO
-            and info.get('acodec') in self.WEB_AUDIO
-        )
+        video_ok = info.get('vcodec') in self.WEB_VIDEO
+        audio_ok = info.get('acodec') in self.WEB_AUDIO
+        if video_ok and audio_ok:
+            return 'remux'
+        if video_ok:
+            return 'audio'
+        return 'full'
 
     def remux(self, src, dst, progress_cb=None):
         """Copie les flux vers un mp4 web (rapide, sans ré-encodage) + faststart."""
@@ -297,9 +315,17 @@ class Transcoder:
             progress_cb(1.0)
 
     def transcode(self, src, dst, progress_cb=None):
+        """Ré-encodage vidéo complet (H.264/AAC 720w). Bloquant."""
+        self._encode(src, dst, self.RECIPE, progress_cb)
+
+    def transcode_audio_only(self, src, dst, progress_cb=None):
+        """Copie la vidéo (déjà web) et ne ré-encode QUE l'audio. Rapide."""
+        self._encode(src, dst, self.RECIPE_AUDIO_ONLY, progress_cb)
+
+    def _encode(self, src, dst, recipe, progress_cb=None):
         """
-        Transcode `src` vers `dst` (mp4). Bloquant.
-        `progress_cb(ratio)` est appelé avec l'avancement 0..1.
+        Lance ffmpeg avec `recipe` (args de sortie) et suit la progression.
+        Bloquant ; `progress_cb(ratio)` reçoit l'avancement 0..1.
         Lève RuntimeError en cas d'échec ffmpeg.
         """
         duration = self.probe_duration(src)
@@ -315,7 +341,7 @@ class Transcoder:
             # couverture), TOUTES les pistes audio (multi-langues), aucun
             # sous-titre muxé (ils sont extraits séparément en .vtt).
             '-map', '0:V:0', '-map', '0:a?', '-sn',
-            *self.RECIPE,
+            *recipe,
             '-progress', 'pipe:1', '-nostats', '-loglevel', 'error',
             str(tmp_dst),
         ]
@@ -584,33 +610,42 @@ class JobWorker:
         if movie_id in self.cancelled:
             return
 
-        # --- 2. Sous-titres ---
-        # a) externes (OpenSubtitles) via imdb/tmdb, b) embarqués (mkv texte).
-        subs = {}
-        if self.subtitles_fetcher:
-            self.library.patch(movie_id, {"status": "fetching-subs"})
+        # --- 2. Sous-titres (ordre de repli) ---
+        # a) embarqués du mkv : même montage que la vidéo → synchro parfaite.
+        # b) langues manquantes : OpenSubtitles calé sur le release (moviehash).
+        # c) resynchro auto sur l'audio (ffsubsync, best-effort) — dans fetch().
+        self.library.patch(movie_id, {"status": "fetching-subs"})
+        subs = dict(self.transcoder.extract_subtitles(src, self.movies_dir, movie_id))
+        missing = [lang for lang in ('fr', 'en') if lang not in subs]
+        if missing and self.subtitles_fetcher:
             try:
-                subs = self.subtitles_fetcher.fetch(
+                external = self.subtitles_fetcher.fetch(
                     imdb_id=entry.get('imdbId'), tmdb_id=entry.get('tmdbId'),
                     title=entry.get('title'), year=entry.get('year'),
                     out_dir=self.movies_dir, base_name=movie_id,
+                    video_path=src, want_langs=missing,
                 )
+                subs.update(external)
             except Exception as err:  # pas bloquant : on continue sans sous-titres
                 print(f"[Worker] Sous-titres indisponibles pour {movie_id} : {err}")
-        embedded = self.transcoder.extract_subtitles(src, self.movies_dir, movie_id)
-        for lang, fname in embedded.items():
-            subs.setdefault(lang, fname)  # priorité aux ST externes
 
-        # --- 3. Préparation vidéo : remux si déjà web-compatible, sinon transcode ---
+        # --- 3. Préparation vidéo : copie, audio-only ou ré-encodage complet ---
         self.library.patch(movie_id, {"status": "transcoding", "error": None})
         dst = self.movies_dir / entry['file']
-        if self.transcoder.needs_reencode(src):
-            # HEVC, AVI, audio AC3/DTS… : ré-encodage complet (H.264/AAC 720w)
-            self.transcoder.transcode(src, dst, self._progress_writer(movie_id, entry, 'transcode'))
-        else:
+        cb = self._progress_writer(movie_id, entry, 'transcode')
+        plan = self.transcoder.plan(src)
+        if plan == 'remux':
             # Déjà H.264/AAC (ex. fichiers YIFY) : simple copie des flux, instantané
             print(f"[Worker] {movie_id} déjà web-compatible : remux sans ré-encodage")
-            self.transcoder.remux(src, dst, self._progress_writer(movie_id, entry, 'transcode'))
+            self.transcoder.remux(src, dst, cb)
+        elif plan == 'audio':
+            # H.264 + audio AC3/DTS… : on copie la vidéo, on convertit l'audio seul
+            print(f"[Worker] {movie_id} vidéo OK, audio à convertir : ré-encodage audio seul")
+            self.transcoder.transcode_audio_only(src, dst, cb)
+        else:
+            # HEVC, AVI, MPEG-2… : ré-encodage vidéo complet (lent)
+            print(f"[Worker] {movie_id} vidéo à ré-encoder (complet)")
+            self.transcoder.transcode(src, dst, cb)
 
         if movie_id in self.cancelled:
             dst.unlink(missing_ok=True)

@@ -29,6 +29,9 @@ const FILTERS = [
   { key: 'seen', label: 'Seen' },
 ];
 
+// Filtre actif à l'ouverture : « Unseen » (on cache les films déjà terminés).
+const DEFAULT_FILTER = FILTERS.findIndex((f) => f.key === 'unseen');
+
 export class MovieBrowser extends EventEmitter {
   constructor(library) {
     super();
@@ -40,7 +43,7 @@ export class MovieBrowser extends EventEmitter {
     this.selectedId = null;
     this._pendingDelete = false;
     this.sortIndex = 0;
-    this.filterIndex = 0;
+    this.filterIndex = DEFAULT_FILTER;
   }
 
   /** Construit la structure DOM une seule fois et l'attache au body. */
@@ -51,7 +54,7 @@ export class MovieBrowser extends EventEmitter {
       <div class="crt-header">
         <span class="crt-title">Movie Library</span>
         <span class="crt-meta"></span>
-        <span class="crt-clock-wrap"><span class="crt-clock"></span><span class="crt-date"></span></span>
+        <span class="crt-clock-wrap"><span class="crt-clock"></span><span class="crt-weather"></span><span class="crt-date"></span></span>
       </div>
       <div class="mb-body">
         <div class="mb-list"></div>
@@ -90,7 +93,9 @@ export class MovieBrowser extends EventEmitter {
 
   _updateFooterLabels() {
     this.sortBtn.textContent = `[Sort: ${SORTS[this.sortIndex].label}]`;
-    this.filterBtn.textContent = `[Show: ${FILTERS[this.filterIndex].label}]`;
+    // Sans le préfixe « Show: » : les valeurs se suffisent, et le pied de page
+    // n'a plus la place depuis l'ajout du 3ᵉ raccourci [Advisor].
+    this.filterBtn.textContent = `[${FILTERS[this.filterIndex].label}]`;
   }
 
   /** Affiche l'overlay et (re)construit la liste depuis le catalogue courant. */
@@ -157,7 +162,7 @@ export class MovieBrowser extends EventEmitter {
     return items;
   }
 
-  /** Une ligne : caret · titre · barre segmentée (film prêt) ou état (en cours). */
+  /** Une ligne : caret · titre · barre de progression (film prêt) ou état (en cours). */
   renderRow(entry) {
     const ready = this.library.isReady(entry);
     const busy = this.library.isActive(entry);
@@ -169,12 +174,11 @@ export class MovieBrowser extends EventEmitter {
 
     // Film prêt → barre de progression ; sinon → libellé d'état (téléchargement…).
     const lastCell = ready
-      ? segBar(this.library.progressRatio(entry))
+      ? barHtml(this.library.progressRatio(entry))
       : `<span class="mb-row-status">${escapeHtml(statusInfo(entry).label)}</span>`;
 
     row.innerHTML = `
-      <span class="mb-caret">&gt;</span>
-      <span class="mb-row-title">${escapeHtml(entry.title || entry.id)}</span>
+      <span class="mb-row-main"><span class="mb-caret">&gt;</span><span class="mb-row-title">${escapeHtml(entry.title || entry.id)}</span></span>
       ${lastCell}
     `;
 
@@ -214,13 +218,17 @@ export class MovieBrowser extends EventEmitter {
       <div class="mb-d-title">${escapeHtml(entry.title || entry.id)}</div>
       ${entry.year ? `<div class="mb-d-year">${escapeHtml(String(entry.year))}</div>` : ''}
       <div class="mb-d-prog">${escapeHtml(progLine)}
-        ${segBar(ratio, 16)}
+        ${barHtml(ratio, ready ? '' : barVariant(entry))}
       </div>
       <div class="mb-d-actions">
         <button class="crt-btn mb-play" type="button"${ready ? '' : ' disabled'}>Play</button>
         <button class="crt-btn mb-delete" type="button">Delete</button>
       </div>
+      ${entry.overview ? `<div class="mb-d-overview">${escapeHtml(entry.overview)}</div>` : ''}
     `;
+    // Nouvelle sélection : revenir en haut du volet (sinon on garde le scroll
+    // de la description du film précédent).
+    this.detailEl.scrollTop = 0;
 
     const posterBox = this.detailEl.querySelector('.mb-poster');
     const img = posterBox.querySelector('img');
@@ -316,14 +324,20 @@ function formatTime(sec) {
 }
 
 /**
- * Barre de progression segmentée : `n` cellules, remplies jusqu'au ratio.
- * Rendu léger (chaînes) sans dépendance CSS complexe.
+ * Barre de progression simple : piste bleu foncé + remplissage ambre, réutilise
+ * les classes partagées .crt-bar / .crt-bar-fill (mêmes que le seekbar de pause).
  */
-function segBar(ratio, n = 12) {
-  const filled = Math.round(Math.max(0, Math.min(1, ratio)) * n);
-  let cells = '';
-  for (let i = 0; i < n; i++) cells += `<i class="${i < filled ? 'on' : ''}"></i>`;
-  return `<span class="seg">${cells}</span>`;
+function barHtml(ratio, variant = '') {
+  const pct = Math.round(Math.max(0, Math.min(1, ratio)) * 100);
+  const cls = variant ? ` mb-bar--${variant}` : '';
+  return `<span class="crt-bar mb-bar${cls}"><span class="crt-bar-fill" style="width:${pct}%"></span></span>`;
+}
+
+/** Variante de couleur de la barre selon l'état (téléchargement / conversion). */
+function barVariant(entry) {
+  if (entry.status === 'downloading') return 'download';
+  if (entry.status === 'transcoding' || entry.status === 'fetching-subs') return 'convert';
+  return '';
 }
 
 function escapeHtml(str) {

@@ -10,11 +10,19 @@ function detectOS() {
   else return 'linux';
 }
 
+// L'API tourne sur le même hôte que la page, port 5000. En déduire l'hôte
+// permet d'ouvrir l'interface depuis un autre poste du réseau (ex.
+// http://192.168.1.12:8000) sans pointer le « localhost » du navigateur.
+function detectApiHost() {
+  const host = location.hostname || 'localhost';
+  return `http://${host}:5000`;
+}
+
 // Configuration
 const config = {
   os: detectOS(),
   api: {
-    host: 'http://localhost:5000',
+    host: detectApiHost(),
     endpoints: {
       load: '/load',
       save: '/save',
@@ -30,6 +38,11 @@ const config = {
       moviesStatus: '/movies/status',
       moviesCancel: '/movies/cancel',
       moviesDelete: '/movies/delete',
+      // Movie Advisor (recommandations IA + blacklist « Forget »)
+      advisorRecommend: '/advisor/recommend',
+      advisorForget: '/advisor/forget',
+      // Météo (proxy Open-Meteo, sans clé)
+      weather: '/weather',
     },
   },
   hardware: {

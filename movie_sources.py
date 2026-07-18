@@ -9,7 +9,11 @@ contenu relève de l'utilisateur.
 """
 
 import json
+import os
 import re
+import shutil
+import struct
+import subprocess
 import time
 from pathlib import Path
 
@@ -24,6 +28,20 @@ from requests.adapters import HTTPAdapter
 SECRETS_TEMPLATE = {
     "tmdb": {"apiKey": ""},
     "opensubtitles": {"apiKey": "", "username": "", "password": ""},
+    # Movie Advisor : chaîne de fournisseurs IA essayés dans l'ordre (Gemini,
+    # puis OpenRouter, puis fallbacks). Le 1er qui répond gagne ; un fournisseur
+    # en panne/quota laisse la place au suivant. Il suffit d'UN fournisseur.
+    #   - Gemini : clé gratuite sur https://aistudio.google.com (sans CB).
+    #   - OpenRouter : https://openrouter.ai (modèles ":free", quota limité).
+    "gemini": {"apiKey": "", "model": "gemini-2.5-flash"},
+    "openRouter": {"apiKey": "", "model": "meta-llama/llama-3.3-70b-instruct:free"},
+    # Fallbacks génériques compatibles OpenAI (/chat/completions), essayés après
+    # les précédents. Ex. Groq (gratuit, rapide) ou xAI/Grok (crédits requis) :
+    #   {"name": "Groq", "baseUrl": "https://api.groq.com/openai/v1",
+    #    "apiKey": "", "model": "llama-3.3-70b-versatile"},
+    #   {"name": "xAI", "baseUrl": "https://api.x.ai/v1",
+    #    "apiKey": "", "model": "grok-3"},
+    "advisorFallbacks": [],
     "indexers": [
         # Deux types disponibles (à compléter par l'utilisateur) :
         #
@@ -444,12 +462,16 @@ class Tmdb:
     def available(self):
         return bool(self.api_key)
 
-    def search(self, query, year=None):
-        """Retourne le meilleur film {tmdbId, title, year, posterUrl, overview} ou None."""
+    def search(self, query, year=None, language="fr-FR"):
+        """
+        Retourne le meilleur film {tmdbId, title, originalTitle, year, posterUrl,
+        overview} ou None. `language` pilote la langue des champs traduits :
+        en-US pour obtenir un `title` anglais (utile pour la recherche torrent).
+        """
         if not self.api_key:
             return None
         try:
-            params = {"api_key": self.api_key, "query": query, "language": "fr-FR"}
+            params = {"api_key": self.api_key, "query": query, "language": language}
             if year:
                 params["year"] = year
             resp = requests.get(f"{self.BASE}/search/movie", params=params, timeout=8)
@@ -466,10 +488,50 @@ class Tmdb:
         return {
             "tmdbId": m.get("id"),
             "title": m.get("title"),
+            # Titre original (souvent l'anglais) : meilleur pour la recherche
+            # torrent que le titre traduit renvoyé en fr-FR.
+            "originalTitle": m.get("original_title") or m.get("title"),
             "year": int(y) if y.isdigit() else year,
             "posterUrl": f"{self.IMG}/w500{poster}" if poster else None,
             "overview": m.get("overview"),
         }
+
+    def english_title(self, tmdb_id):
+        """
+        Titre anglais d'un film par son id TMDB (best-effort, None si échec).
+        Passe par l'id pour ne PAS refausser la correspondance : on cherche le
+        film en fr-FR (le titre vient de Gemini en français) puis on lit son
+        titre anglais ici — ex. « Les Évadés » → « The Shawshank Redemption ».
+        """
+        if not self.api_key or not tmdb_id:
+            return None
+        try:
+            resp = requests.get(
+                f"{self.BASE}/movie/{tmdb_id}",
+                params={"api_key": self.api_key, "language": "en-US"},
+                timeout=8,
+            )
+            resp.raise_for_status()
+            return resp.json().get("title")
+        except (requests.RequestException, ValueError) as err:
+            print(f"[TMDB] titre anglais indisponible : {err}")
+            return None
+
+    def overview(self, tmdb_id, language="fr-FR"):
+        """Synopsis d'un film par son id TMDB (best-effort, None si échec)."""
+        if not self.api_key or not tmdb_id:
+            return None
+        try:
+            resp = requests.get(
+                f"{self.BASE}/movie/{tmdb_id}",
+                params={"api_key": self.api_key, "language": language},
+                timeout=8,
+            )
+            resp.raise_for_status()
+            return resp.json().get("overview") or None
+        except (requests.RequestException, ValueError) as err:
+            print(f"[TMDB] synopsis indisponible : {err}")
+            return None
 
     def download_poster(self, poster_url, dest_path):
         """Télécharge une affiche vers dest_path. Retourne True si OK."""
@@ -536,11 +598,67 @@ class Subtitles:
         self.username = username or ""
         self.password = password or ""
         self.ffmpeg = ffmpeg
+        # Resynchro auto (best-effort) : activée seulement si le binaire est là.
+        # Non installé par défaut (ffsubsync tire numpy/scipy) ; voir README.
+        self.ffsubsync = shutil.which("ffsubsync")
         self._token = None
         self._token_ts = 0
 
     def available(self):
         return bool(self.api_key and self.username and self.password)
+
+    @staticmethod
+    def moviehash(path):
+        """
+        Hash OpenSubtitles d'un fichier vidéo : somme 64 bits de la taille et des
+        premiers/derniers 64 Kio. Permet de retrouver le sous-titre calé sur CE
+        release précis (bien plus fiable que la recherche par titre/imdb).
+        Retourne une chaîne hex de 16 caractères, ou None si le fichier est trop
+        petit ou illisible.
+        """
+        try:
+            chunk = 65536
+            size = os.path.getsize(path)
+            if size < chunk * 2:
+                return None
+            h = size
+            with open(path, "rb") as f:
+                for _ in range(chunk // 8):
+                    (val,) = struct.unpack("<q", f.read(8))
+                    h = (h + val) & 0xFFFFFFFFFFFFFFFF
+                f.seek(size - chunk)
+                for _ in range(chunk // 8):
+                    (val,) = struct.unpack("<q", f.read(8))
+                    h = (h + val) & 0xFFFFFFFFFFFFFFFF
+            return f"{h:016x}"
+        except (OSError, struct.error) as err:
+            print(f"[OpenSubtitles] moviehash impossible : {err}")
+            return None
+
+    def resync(self, vtt_path, video_path):
+        """
+        Recale un .vtt sur la bande-son via ffsubsync (best-effort, en place).
+        Sans le binaire, ne fait rien et retourne False. Ne lève jamais.
+        """
+        if not self.ffsubsync:
+            return False
+        tmp = f"{vtt_path}.synced.vtt"
+        try:
+            proc = subprocess.run(
+                [self.ffsubsync, str(video_path), "-i", str(vtt_path), "-o", tmp],
+                capture_output=True, timeout=600,
+            )
+            if proc.returncode == 0 and os.path.exists(tmp):
+                os.replace(tmp, vtt_path)
+                print(f"[OpenSubtitles] resynchro OK : {os.path.basename(vtt_path)}")
+                return True
+            print(f"[OpenSubtitles] resynchro échouée ({proc.returncode})")
+        except (subprocess.SubprocessError, OSError) as err:
+            print(f"[OpenSubtitles] resynchro impossible : {err}")
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+        return False
 
     def _headers(self, auth=False):
         h = {
@@ -567,34 +685,50 @@ class Subtitles:
         self._token_ts = time.time()
         return self._token
 
-    def fetch(self, imdb_id=None, tmdb_id=None, title=None, year=None, out_dir=".", base_name="movie"):
+    def fetch(self, imdb_id=None, tmdb_id=None, title=None, year=None,
+              out_dir=".", base_name="movie", video_path=None, want_langs=None):
         """
-        Cherche, télécharge et convertit les sous-titres fr/en.
-        Recherche par imdb_id/tmdb_id si dispo, sinon par titre + année.
+        Cherche, télécharge et convertit les sous-titres en WebVTT.
+
+        Si `video_path` est fourni, on calcule son moviehash pour retrouver le
+        sous-titre calé sur CE release (bien plus fiable), puis on tente une
+        resynchro auto sur la bande-son (best-effort). `want_langs` restreint aux
+        langues manquantes (les embarqués sont récupérés avant, en amont).
         Retourne {lang: filename.vtt}. Ne lève pas si une langue manque.
         """
         if not self.available():
             return {}
         self._login()
 
+        langs = want_langs or self.LANGS
+        movie_hash = self.moviehash(video_path) if video_path else None
+
         out = {}
-        for lang in self.LANGS:
+        for lang in langs:
             try:
-                file_id = self._best_file_id(lang, imdb_id, tmdb_id, title, year)
+                file_id = self._best_file_id(lang, imdb_id, tmdb_id, title, year, movie_hash)
                 if not file_id:
                     continue
                 srt_text = self._download_srt(file_id)
                 if not srt_text:
                     continue
                 vtt_name = self._srt_to_vtt(srt_text, out_dir, base_name, lang)
-                if vtt_name:
-                    out[lang] = vtt_name
+                if not vtt_name:
+                    continue
+                # Filet de sécurité contre la dérive : recale sur l'audio.
+                if video_path:
+                    self.resync(Path(out_dir) / vtt_name, video_path)
+                out[lang] = vtt_name
             except requests.RequestException as err:
                 print(f"[OpenSubtitles] {lang} échoué : {err}")
         return out
 
-    def _best_file_id(self, lang, imdb_id, tmdb_id, title=None, year=None):
+    def _best_file_id(self, lang, imdb_id, tmdb_id, title=None, year=None, movie_hash=None):
         params = {"languages": lang, "order_by": "download_count"}
+        # Le moviehash cible le release exact : on le passe EN PLUS des autres
+        # critères, puis on privilégie les résultats qui matchent le hash.
+        if movie_hash:
+            params["moviehash"] = movie_hash
         if imdb_id:
             params["imdb_id"] = str(imdb_id).lstrip("t")  # 'tt123' -> '123'
         elif tmdb_id:
@@ -603,12 +737,14 @@ class Subtitles:
             params["query"] = title           # repli : recherche par titre...
             if year:
                 params["year"] = year          # ...affinée par l'année si connue
-        else:
+        elif not movie_hash:
             return None
         resp = requests.get(f"{self.BASE}/subtitles", params=params,
                             headers=self._headers(), timeout=10)
         resp.raise_for_status()
         data = resp.json().get("data", [])
+        # Les correspondances par moviehash d'abord (sous-titre du bon release).
+        data.sort(key=lambda it: not it.get("attributes", {}).get("moviehash_match"))
         for item in data:
             files = item.get("attributes", {}).get("files", [])
             if files:

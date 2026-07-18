@@ -21,7 +21,26 @@ export class PlayerManager extends EventEmitter {
     this.movieIndex = -1;
     this.currentEntry = null;
     this.subtitleMode = 'off'; // 'off' | 'fr' | 'en'
-    this.subtitleOffset = 0; // décalage sous-titres en secondes (+ = plus tard)
+    // Décalage des sous-titres PAR LANGUE (secondes, + = plus tard) : une langue
+    // peut être calée différemment d'une autre. Ex. { fr: 0.3, en: -0.2 }.
+    this.subtitleOffsets = {};
+
+    // Vidéo d'intro locale (boucle native, sans aucune UI YouTube), masquée dès
+    // qu'une chaîne ou un film prend le relais.
+    this.introPlayer = null;
+  }
+
+  /** Enregistre la balise <video> d'intro (gérée depuis app.js au démarrage). */
+  setIntroPlayer(el) {
+    this.introPlayer = el;
+  }
+
+  /** Masque et arrête l'intro (première chaîne / premier film choisi). */
+  hideIntro() {
+    if (this.introPlayer && !this.introPlayer.classList.contains('hidden')) {
+      this.introPlayer.pause();
+      this.introPlayer.classList.add('hidden');
+    }
   }
 
   /**
@@ -93,6 +112,9 @@ export class PlayerManager extends EventEmitter {
     // Stop save interval
     this.state.stopAutoSave();
 
+    // Une vraie chaîne prend le relais : on retire l'intro.
+    this.hideIntro();
+
     // Pause YouTube briefly before loading
     this.youtubePlayer.stopVideo();
 
@@ -147,6 +169,7 @@ export class PlayerManager extends EventEmitter {
     }
 
     this.state.stopAutoSave();
+    this.hideIntro(); // un film prend le relais de l'intro
     this.state.switchToMovieMode(true);
     this.state.setCurrentMovie(entry.id);
 
@@ -168,6 +191,14 @@ export class PlayerManager extends EventEmitter {
 
     this.state.startAutoSave(() => this.saveMovieProgress());
 
+    // Horodate le lancement : alimente le tri par défaut de la bibliothèque
+    // (« déjà lancés, le plus récent d'abord »).
+    const lastPlayedAt = Math.floor(Date.now() / 1000);
+    entry.lastPlayedAt = lastPlayedAt; // cache local, tri immédiat sans refetch
+    this.apiClient
+      .saveLibraryEntry(entry.id, { lastPlayedAt })
+      .catch((err) => console.warn('Failed to save lastPlayedAt:', err));
+
     this.emit('movieLoaded', { entry, index: this.movieIndex });
   }
 
@@ -178,11 +209,21 @@ export class PlayerManager extends EventEmitter {
     // Retire les anciennes pistes
     this.moviePlayer.querySelectorAll('track').forEach((t) => t.remove());
     this.subtitleTracks = {};
-    this.subtitleOffset = 0;
 
     const subs = entry.subtitles || {};
     const langs = Object.keys(subs);
     const labels = { fr: 'Français', en: 'English' };
+
+    // Décalages mémorisés PAR LANGUE. Repli sur l'ancien champ unique
+    // (subtitleOffset) tant qu'aucun décalage par langue n'existe (absent OU
+    // vide) : on l'applique alors à toutes les langues disponibles.
+    let savedOffsets = entry.subtitleOffsets;
+    const hasPerLang = savedOffsets && Object.keys(savedOffsets).length > 0;
+    if (!hasPerLang && entry.subtitleOffset) {
+      savedOffsets = {};
+      for (const lang of langs) savedOffsets[lang] = entry.subtitleOffset;
+    }
+    this.subtitleOffsets = { ...(savedOffsets || {}) };
 
     // Signale les langues de sous-titres disponibles : les contrôles associés
     // s'adaptent (masqués si la liste est vide).
@@ -208,28 +249,45 @@ export class PlayerManager extends EventEmitter {
     }
 
     this.subtitleMode = defaultLang;
-    // Décalage restauré depuis la sauvegarde du film (appliqué une fois les
-    // cues chargées).
-    const savedOffset = entry.subtitleOffset || 0;
-    this.subtitleOffset = 0;
     // Régler le mode juste après l'ajout n'est pas fiable (pistes pas encore
     // chargées) : on ré-applique une fois la vidéo prête pour forcer UNE langue
-    // et appliquer le décalage mémorisé.
+    // et appliquer les décalages mémorisés (par langue) sur chaque piste.
     this.moviePlayer.addEventListener('loadeddata', () => {
       this.applySubtitleMode();
-      if (savedOffset) this.adjustSubtitleOffset(savedOffset);
+      for (const [lang, off] of Object.entries(this.subtitleOffsets)) {
+        if (off) this._shiftCues(lang, off);
+      }
     }, { once: true });
     this.applySubtitleMode();
     this.emit('subtitleModeChanged', this.subtitleMode);
-    this.emit('subtitleOffsetChanged', this.subtitleOffset);
+    this.emit('subtitleOffsetChanged', this.currentOffset());
   }
 
-  /** Persiste langue + décalage des sous-titres dans l'entrée courante. */
+  /** Décalage courant (celui de la langue de sous-titres active). */
+  currentOffset() {
+    return this.subtitleOffsets[this.subtitleMode] || 0;
+  }
+
+  /** Décale les cues d'UNE langue de `delta` secondes. */
+  _shiftCues(lang, delta) {
+    const tracks = this.moviePlayer.textTracks || [];
+    for (let i = 0; i < tracks.length; i++) {
+      if (tracks[i].language !== lang) continue;
+      const cues = tracks[i].cues;
+      if (!cues) continue;
+      for (let j = 0; j < cues.length; j++) {
+        cues[j].startTime = Math.max(0, cues[j].startTime + delta);
+        cues[j].endTime = Math.max(0, cues[j].endTime + delta);
+      }
+    }
+  }
+
+  /** Persiste langue + décalages (par langue) des sous-titres. */
   saveSubtitleSettings() {
     if (!this.currentEntry) return;
     const fields = {
       subtitleMode: this.subtitleMode,
-      subtitleOffset: this.subtitleOffset,
+      subtitleOffsets: { ...this.subtitleOffsets },
     };
     Object.assign(this.currentEntry, fields);
     this.apiClient
@@ -249,6 +307,8 @@ export class PlayerManager extends EventEmitter {
     this.applySubtitleMode();
     this.saveSubtitleSettings();
     this.emit('subtitleModeChanged', next);
+    // Le décalage affiché suit la langue active.
+    this.emit('subtitleOffsetChanged', this.currentOffset());
     return next;
   }
 
@@ -259,6 +319,8 @@ export class PlayerManager extends EventEmitter {
     this.applySubtitleMode();
     this.saveSubtitleSettings();
     this.emit('subtitleModeChanged', mode);
+    // Le décalage affiché suit la langue active.
+    this.emit('subtitleOffsetChanged', this.currentOffset());
     return mode;
   }
 
@@ -310,24 +372,19 @@ export class PlayerManager extends EventEmitter {
   }
 
   /**
-   * Décale la synchro des sous-titres de `delta` secondes (+ = plus tard).
-   * Applique le décalage aux cues déjà chargées de toutes les pistes.
-   * @returns {number} le décalage total courant, en secondes.
+   * Décale la synchro des sous-titres de la LANGUE ACTIVE de `delta` secondes
+   * (+ = plus tard). Chaque langue garde son propre décalage.
+   * @returns {number} le décalage courant de cette langue, en secondes.
    */
   adjustSubtitleOffset(delta) {
-    const tracks = this.moviePlayer.textTracks || [];
-    for (let i = 0; i < tracks.length; i++) {
-      const cues = tracks[i].cues;
-      if (!cues) continue;
-      for (let j = 0; j < cues.length; j++) {
-        cues[j].startTime = Math.max(0, cues[j].startTime + delta);
-        cues[j].endTime = Math.max(0, cues[j].endTime + delta);
-      }
-    }
-    this.subtitleOffset = Math.round((this.subtitleOffset + delta) * 100) / 100;
+    const lang = this.subtitleMode;
+    if (lang === 'off') return 0; // aucune piste active à recaler
+    this._shiftCues(lang, delta);
+    this.subtitleOffsets[lang] = Math.round(((this.subtitleOffsets[lang] || 0) + delta) * 100) / 100;
     this.saveSubtitleSettings();
-    this.emit('subtitleOffsetChanged', this.subtitleOffset);
-    return this.subtitleOffset;
+    const off = this.subtitleOffsets[lang];
+    this.emit('subtitleOffsetChanged', off);
+    return off;
   }
 
   /** Film suivant dans la file de lecture. */
