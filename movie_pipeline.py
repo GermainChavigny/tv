@@ -426,19 +426,21 @@ class Torrent:
             raise RuntimeError("Aucun fichier vidéo dans le torrent")
         return video
 
-    def download_all(self, magnet, progress_cb=None, poll=1.0):
+    def download_all(self, magnet, progress_cb=None, poll=1.0, meta_timeout=120):
         """
         Télécharge `magnet` et renvoie la liste de TOUS les fichiers vidéo (usage
         pack saison/série). Écarte les samples. Lève si annulé/aucune vidéo.
+        `meta_timeout` : délai max pour obtenir les métadonnées (torrent privé/mort
+        → on abandonne vite pour tenter un autre candidat).
         """
-        self._run_download(magnet, progress_cb, poll)
+        self._run_download(magnet, progress_cb, poll, meta_timeout)
         videos = self._list_videos()
         self._remove(delete_files=False)
         if not videos:
             raise RuntimeError("Aucun fichier vidéo dans le torrent")
         return videos
 
-    def _run_download(self, magnet, progress_cb, poll):
+    def _run_download(self, magnet, progress_cb, poll, meta_timeout=120):
         """Boucle commune : métadonnées puis téléchargement jusqu'à complétion."""
         if lt is None:
             raise RuntimeError("libtorrent non disponible (apt install python3-libtorrent)")
@@ -453,7 +455,7 @@ class Torrent:
         h = self.handle
 
         # 1) Récupération des métadonnées (liste des fichiers) via DHT/pairs
-        meta_deadline = time.monotonic() + 120
+        meta_deadline = time.monotonic() + meta_timeout
         while not h.status().has_metadata:
             if self._cancelled:
                 self._remove()
@@ -729,9 +731,26 @@ class JobWorker:
         """
         targets = entry.get('targets', [])
         self.library.patch(pack_id, {"status": "downloading", "error": None})
-        videos = self.torrent.download_all(
-            entry['magnet'], progress_cb=self._progress_writer(pack_id, entry, 'download'),
-        )
+        # Essaie chaque torrent candidat (trié par seeders) jusqu'à en trouver un
+        # joignable : beaucoup de résultats viennent de trackers privés (peers
+        # inaccessibles sans passkey) → métadonnées introuvables, on passe au suivant.
+        candidates = entry.get('candidates') or ([entry['magnet']] if entry.get('magnet') else [])
+        videos, last_err = None, None
+        for i, magnet in enumerate(candidates):
+            if pack_id in self.cancelled:
+                return
+            try:
+                videos = self.torrent.download_all(
+                    magnet, progress_cb=self._progress_writer(pack_id, entry, 'download'),
+                    meta_timeout=45,
+                )
+                break
+            except RuntimeError as err:
+                last_err = err
+                print(f"[Worker] Pack {pack_id} : candidat {i + 1}/{len(candidates)} KO ({err})")
+                self.library.patch(pack_id, {"progress": {"download": 0}})
+        if not videos:
+            raise RuntimeError(str(last_err) if last_err else "Aucune source exploitable")
         if pack_id in self.cancelled:
             return
         self.library.patch(pack_id, {"status": "transcoding"})

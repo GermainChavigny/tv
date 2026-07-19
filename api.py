@@ -99,6 +99,9 @@ def _backfill_overviews():
     if not tmdb.available():
         return
     for movie_id, entry in library.all().items():
+        # Films seulement : les séries/épisodes ont un id TMDB /tv (404 sur /movie).
+        if entry.get('type') not in (None, 'movie'):
+            continue
         if entry.get('overview') or not entry.get('tmdbId'):
             continue
         ov = tmdb.overview(entry['tmdbId'])

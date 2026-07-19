@@ -42,17 +42,21 @@ class SeriesManager:
         return (self.tmdb.english_tv_title(show.get('tmdbId'))
                 or show.get('originalTitle') or show.get('title') or '')
 
-    def _search_best(self, query, limit=20):
-        """Meilleur torrent (plus de seeders) pour `query` en catégorie TV, ou None."""
+    def _search_candidates(self, query, limit=25, top=6):
+        """
+        Magnets candidats (triés par seeders) pour `query` en catégorie TV. On en
+        renvoie plusieurs : beaucoup viennent de trackers privés (injoignables sans
+        passkey) → le worker essaie les suivants si le premier échoue.
+        """
         if not self.indexer.available():
-            return None
+            return []
         results = self.indexer.search(query, limit=limit, cat=CAT_TV)
+        magnets = []
         for movie in results:  # déjà triés par seeders décroissant
-            tors = movie.get('torrents') or []
-            if tors and tors[0].get('magnet'):
-                return {"magnet": tors[0]['magnet'], "title": movie.get('title'),
-                        "seeders": tors[0].get('seeders')}
-        return None
+            for t in (movie.get('torrents') or []):
+                if t.get('magnet'):
+                    magnets.append(t['magnet'])
+        return magnets[:top]
 
     def _season_targets(self, show, season):
         """Liste des cibles {season, episode, episodeId, title} d'une saison."""
@@ -68,9 +72,9 @@ class SeriesManager:
             "title": e.get('title'),
         } for e in eps if e.get('ep')]
 
-    def _start_pack(self, show, magnet, targets, scope, season, fallback):
-        """Crée et enfile un job pack ciblant `targets`."""
-        if not targets:
+    def _start_pack(self, show, candidates, targets, scope, season, fallback):
+        """Crée et enfile un job pack ciblant `targets` (essaie chaque candidat)."""
+        if not targets or not candidates:
             return None
         label = ("Série complète" if scope == 'series'
                  else f"Saison {season}" if scope == 'season'
@@ -83,7 +87,7 @@ class SeriesManager:
             "tmdbId": show.get('tmdbId'), "year": show.get('year'),
             "title": f"{show.get('title')} — {label}",
             "scope": scope, "season": season, "fallback": bool(fallback),
-            "magnet": magnet, "targets": targets,
+            "candidates": candidates, "magnet": candidates[0], "targets": targets,
             "status": "queued", "progress": {}, "error": None,
             "addedAt": int(time.time()),
         }
@@ -135,22 +139,22 @@ class SeriesManager:
 
         if scope == 'episode':
             s, e = int(season), int(episode)
-            best = self._search_best(f"{eng} S{s:02d}E{e:02d}")
-            if not best:
+            cands = self._search_candidates(f"{eng} S{s:02d}E{e:02d}")
+            if not cands:
                 errors.append(f"Aucune source pour S{s:02d}E{e:02d}")
             else:
                 t = {"season": s, "episode": e,
                      "episodeId": self._episode_id(show_id, s, e), "title": None}
-                pid = self._start_pack(show, best['magnet'], [t], 'episode', s, fallback=False)
+                pid = self._start_pack(show, cands, [t], 'episode', s, fallback=False)
                 if pid:
                     queued.append(pid)
 
         elif scope == 'season':
             s = int(season)
             targets = self._season_targets(show, s)
-            best = self._search_best(f"{eng} S{s:02d}")
-            if best:
-                pid = self._start_pack(show, best['magnet'], targets, 'season', s, fallback=True)
+            cands = self._search_candidates(f"{eng} S{s:02d}")
+            if cands:
+                pid = self._start_pack(show, cands, targets, 'season', s, fallback=True)
                 if pid:
                     queued.append(pid)
             else:
