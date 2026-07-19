@@ -157,11 +157,14 @@ export class SeriesPopup extends EventEmitter {
     }
     this.episodesEl.innerHTML = eps.map((e) => {
       const st = this._effState(e);
+      const pct = (st === 'downloading' && e.progress)
+        ? `<span class="sp-ep-pct">${Math.round(e.progress * 100)}%</span>` : '';
       return `
         <div class="sp-ep sp-ep--${st}" data-ep="${e.ep}">
           <span class="sp-ep-state">${(STATE[st] || {}).icon || ''}</span>
           <span class="sp-ep-num">E${String(e.ep).padStart(2, '0')}</span>
           <span class="sp-ep-title">${escapeHtml(e.title || '')}</span>
+          ${pct}
         </div>`;
     }).join('');
     // Conserve la sélection si l'épisode existe encore, sinon prend le premier.
@@ -191,14 +194,26 @@ export class SeriesPopup extends EventEmitter {
     const action = st === 'ready'
       ? '<button class="crt-btn sp-play" type="button">▶ Play</button>'
       : st === 'downloading'
-        ? '<button class="crt-btn" type="button" disabled>Downloading…</button>'
+        ? ''  // pas d'action pendant le téléchargement (barre de progression à la place)
         : '<button class="crt-btn sp-get" type="button">Download episode</button>';
+
+    // Ligne d'état : libellé + barre de progression si en cours.
+    let stateBlock;
+    if (st === 'downloading') {
+      const pct = Math.round((e.progress || 0) * 100);
+      const variant = e.phase === 'transcoding' ? 'convert' : 'download';
+      stateBlock = `
+        <div class="sp-d-state sp-d-state--downloading">${phaseLabel(e.phase, pct)}</div>
+        <div class="sp-d-prog"><span class="crt-bar mb-bar mb-bar--${variant}"><span class="crt-bar-fill" style="width:${pct}%"></span></span></div>`;
+    } else {
+      stateBlock = `<div class="sp-d-state sp-d-state--${st}">${meta.icon} ${meta.label}</div>`;
+    }
 
     this.detailEl.innerHTML = `
       <div class="sp-d-still">${e.still ? '<img draggable="false" alt="" />' : ''}</div>
       <div class="sp-d-num">${num}</div>
       <div class="sp-d-title">${escapeHtml(e.title || '')}</div>
-      <div class="sp-d-state sp-d-state--${st}">${meta.icon} ${meta.label}</div>
+      ${stateBlock}
       <div class="sp-d-action">${action}</div>
       ${e.overview ? `<div class="sp-d-overview">${escapeHtml(e.overview)}</div>` : ''}
     `;
@@ -236,6 +251,14 @@ export class SeriesPopup extends EventEmitter {
     clearInterval(this.pollTimer);
     this.pollTimer = null;
   }
+}
+
+/** Libellé de phase pour un épisode en cours (téléchargement / conversion). */
+function phaseLabel(phase, pct) {
+  if (phase === 'transcoding') return `Converting ${pct}%`;
+  if (phase === 'downloading') return `Downloading ${pct}%`;
+  if (phase === 'fetching-subs') return 'Subtitles…';
+  return 'Queued…';
 }
 
 function escapeHtml(str) {

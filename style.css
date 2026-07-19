@@ -483,21 +483,24 @@ body {
   min-height: 0;
 }
 
-/* Colonne gauche : onglets saisons + liste d'épisodes. */
+/* Colonne gauche : onglets saisons + liste d'épisodes. min-width:0 est ESSENTIEL
+   pour qu'une longue barre de saisons ne pousse pas le volet détail hors écran. */
 #series-popup .sp-left {
   flex: 1 1 60%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
   border-right: 0.42vw solid var(--crt-border);
 }
 
-/* Barre d'onglets de saisons (défile horizontalement si nombreuses). */
+/* Barre d'onglets de saisons : passe à la ligne si nombreuses (toutes cliquables
+   à la souris, pas de défilement horizontal). */
 #series-popup .sp-seasons {
   flex: 0 0 auto;
   display: flex;
-  gap: 0 0.83vw;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  gap: 0.6vh 0.83vw;
   padding: 1vh var(--crt-safe-x);
   border-bottom: 0.28vw solid var(--crt-divider);
 }
@@ -536,10 +539,13 @@ body {
 #series-popup .sp-ep-num { flex: 0 0 8vw; color: var(--crt-dim); }
 #series-popup .sp-ep-title {
   flex: 1 1 auto;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+#series-popup .sp-ep-pct { flex: 0 0 auto; color: var(--crt-f3); font-size: 2.2vw; }
+#series-popup .sp-ep.is-active .sp-ep-pct { color: var(--crt-accent-ink); }
 #series-popup .sp-ep--ready .sp-ep-state { color: var(--crt-f1); }        /* ▶ vert */
 #series-popup .sp-ep--downloading { color: var(--crt-dim); }
 #series-popup .sp-ep--downloading .sp-ep-state { color: var(--crt-f3); }  /* … cyan */
@@ -561,6 +567,7 @@ body {
 /* Volet d'info de l'épisode sélectionné (droite). */
 #series-popup .sp-detail {
   flex: 1 1 40%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -586,6 +593,8 @@ body {
 #series-popup .sp-d-state--missing { color: var(--crt-accent); }
 #series-popup .sp-d-state--error { color: #e07a7a; }
 #series-popup .sp-d-action .crt-btn { width: 100%; text-align: center; margin-top: 0.4vh; }
+#series-popup .sp-d-prog { margin-top: 0.4vh; }
+#series-popup .sp-d-prog .crt-bar { width: 100%; }
 #series-popup .sp-d-overview {
   flex: 1 1 auto;
   min-height: 0;

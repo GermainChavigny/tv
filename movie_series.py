@@ -194,26 +194,38 @@ class SeriesManager:
             return None
         eps = self.tmdb.tv_season(show.get('tmdbId'), season) or []
         lib = self.library.all()
-        # Un pack actif couvrant cette saison → épisodes non encore obtenus = "downloading".
-        pack_active = any(
-            e.get('type') == 'pack' and e.get('showId') == show_id
-            and (e.get('scope') == 'series' or e.get('season') == season)
-            for e in lib.values()
-        )
+        # Pack actif couvrant cette saison (donne la progression de téléchargement
+        # des épisodes pas encore extraits en entrée propre).
+        pack = next((e for e in lib.values()
+                     if e.get('type') == 'pack' and e.get('showId') == show_id
+                     and (e.get('scope') == 'series' or e.get('season') == season)), None)
+        pack_dl = (pack.get('progress', {}) or {}).get('download', 0) if pack else 0
         out = []
         for e in eps:
             ep = e.get('ep')
             if not ep:
                 continue
             entry = lib.get(self._episode_id(show_id, season, ep))
+            state, progress, phase = 'missing', 0.0, None
             if entry:
-                st = 'ready' if entry.get('status') == 'ready' else (
-                     'error' if entry.get('status') == 'error' else 'downloading')
-            else:
-                st = 'downloading' if pack_active else 'missing'
+                st = entry.get('status')
+                p = entry.get('progress', {}) or {}
+                if st == 'ready':
+                    state, progress = 'ready', 1.0
+                elif st == 'error':
+                    state = 'error'
+                elif st == 'transcoding':
+                    state, phase, progress = 'downloading', 'transcoding', p.get('transcode', 0)
+                elif st == 'downloading':
+                    state, phase, progress = 'downloading', 'downloading', p.get('download', 0)
+                else:  # queued / fetching-subs
+                    state, phase = 'downloading', st
+            elif pack:
+                state, phase, progress = 'downloading', 'downloading', pack_dl
             out.append({
                 "ep": ep, "title": e.get('title'), "overview": e.get('overview'),
-                "still": e.get('still'), "state": st,
+                "still": e.get('still'), "state": state,
+                "progress": round(progress, 3), "phase": phase,
             })
         return {"season": season, "episodes": out}
 
