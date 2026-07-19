@@ -204,10 +204,10 @@ export class SeriesPopup extends EventEmitter {
     let stateBlock;
     if (st === 'downloading') {
       const pct = Math.round((e.progress || 0) * 100);
-      const variant = e.phase === 'transcoding' ? 'convert' : 'download';
+      const conv = e.phase === 'transcoding';
       stateBlock = `
-        <div class="sp-d-state sp-d-state--downloading">${phaseLabel(e.phase, pct)}</div>
-        <div class="sp-d-prog"><span class="crt-bar mb-bar mb-bar--${variant}"><span class="crt-bar-fill" style="width:${pct}%"></span></span></div>`;
+        <div class="sp-d-state sp-d-state--${conv ? 'converting' : 'downloading'}">${phaseLabel(e.phase, pct)}</div>
+        <div class="sp-d-prog"><span class="crt-bar mb-bar mb-bar--${conv ? 'convert' : 'download'}"><span class="crt-bar-fill" style="width:${pct}%"></span></span></div>`;
     } else {
       stateBlock = `<div class="sp-d-state sp-d-state--${st}">${meta.icon} ${meta.label}</div>`;
     }

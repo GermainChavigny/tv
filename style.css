@@ -594,9 +594,14 @@ body {
 #series-popup .sp-d-title { color: var(--crt-accent); font-size: 2.8vw; font-weight: bold; }
 #series-popup .sp-d-state { font-size: 2.3vw; }
 #series-popup .sp-d-state--ready { color: var(--crt-f1); }
-#series-popup .sp-d-state--downloading { color: var(--crt-f3); }
+#series-popup .sp-d-state--downloading { color: var(--crt-f3); }  /* téléchargement : cyan */
+#series-popup .sp-d-state--converting { color: var(--crt-f1); }   /* conversion : vert */
 #series-popup .sp-d-state--missing { color: var(--crt-accent); }
 #series-popup .sp-d-state--error { color: #e07a7a; }
+/* Remplissage de la barre du volet détail (les règles films sont scopées
+   #movie-browser → il faut les redéclarer ici). */
+#series-popup .mb-bar--download .crt-bar-fill { background-color: var(--crt-f3); }
+#series-popup .mb-bar--convert .crt-bar-fill { background-color: var(--crt-f1); }
 #series-popup .sp-d-action .crt-btn { width: 100%; text-align: center; margin-top: 0.4vh; }
 #series-popup .sp-d-prog { margin-top: 0.4vh; }
 #series-popup .sp-d-prog .crt-bar { width: 100%; }
