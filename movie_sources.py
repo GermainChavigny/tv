@@ -653,7 +653,8 @@ class Subtitles:
         return self._token
 
     def fetch(self, imdb_id=None, tmdb_id=None, title=None, year=None,
-              out_dir=".", base_name="movie", video_path=None, want_langs=None):
+              out_dir=".", base_name="movie", video_path=None, want_langs=None,
+              season=None, episode=None):
         """
         Cherche, télécharge et convertit les sous-titres en WebVTT.
 
@@ -673,7 +674,8 @@ class Subtitles:
         out = {}
         for lang in langs:
             try:
-                file_id = self._best_file_id(lang, imdb_id, tmdb_id, title, year, movie_hash)
+                file_id = self._best_file_id(lang, imdb_id, tmdb_id, title, year,
+                                             movie_hash, season, episode)
                 if not file_id:
                     continue
                 srt_text = self._download_srt(file_id)
@@ -690,12 +692,18 @@ class Subtitles:
                 print(f"[OpenSubtitles] {lang} échoué : {err}")
         return out
 
-    def _best_file_id(self, lang, imdb_id, tmdb_id, title=None, year=None, movie_hash=None):
+    def _best_file_id(self, lang, imdb_id, tmdb_id, title=None, year=None,
+                      movie_hash=None, season=None, episode=None):
         params = {"languages": lang, "order_by": "download_count"}
         # Le moviehash cible le release exact : on le passe EN PLUS des autres
         # critères, puis on privilégie les résultats qui matchent le hash.
         if movie_hash:
             params["moviehash"] = movie_hash
+        # Série : restreint à l'épisode voulu (OpenSubtitles gère season/episode).
+        if season is not None:
+            params["season_number"] = season
+        if episode is not None:
+            params["episode_number"] = episode
         if imdb_id:
             params["imdb_id"] = str(imdb_id).lstrip("t")  # 'tt123' -> '123'
         elif tmdb_id:
