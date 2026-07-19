@@ -480,8 +480,16 @@ body {
 #series-popup .sp-body {
   flex: 1 1 auto;
   display: flex;
+  min-height: 0;
+}
+
+/* Colonne gauche : onglets saisons + liste d'épisodes. */
+#series-popup .sp-left {
+  flex: 1 1 60%;
+  display: flex;
   flex-direction: column;
   min-height: 0;
+  border-right: 0.42vw solid var(--crt-border);
 }
 
 /* Barre d'onglets de saisons (défile horizontalement si nombreuses). */
@@ -539,7 +547,53 @@ body {
 #series-popup .sp-ep--missing .sp-ep-state { color: var(--crt-accent); }  /* + ambre */
 #series-popup .sp-ep--missing .sp-ep-title { color: var(--crt-dim); }
 #series-popup .sp-ep--error .sp-ep-state { color: #e07a7a; }
+#series-popup .sp-ep.is-active {
+  background-color: var(--crt-accent);
+  color: var(--crt-accent-ink);
+  text-shadow: none;
+}
+#series-popup .sp-ep.is-active,
+#series-popup .sp-ep.is-active .sp-ep-num,
+#series-popup .sp-ep.is-active .sp-ep-state,
+#series-popup .sp-ep.is-active .sp-ep-title { color: var(--crt-accent-ink); }
 #series-popup .sp-msg { padding: 3vh var(--crt-safe-x); color: var(--crt-dim); font-size: 2.5vw; }
+
+/* Volet d'info de l'épisode sélectionné (droite). */
+#series-popup .sp-detail {
+  flex: 1 1 40%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.2vh 1.11vw 1.2vh 1.4vw;
+  gap: 0.6vh 0;
+}
+#series-popup .sp-detail > * { flex: 0 0 auto; }
+#series-popup .sp-detail.is-empty { justify-content: center; text-align: center; color: var(--crt-dim); }
+#series-popup .sp-d-still {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background-color: var(--crt-panel);
+  border: 0.28vw solid var(--crt-accent);
+}
+#series-popup .sp-d-still img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#series-popup .sp-d-still.no-poster img { display: none; }
+#series-popup .sp-d-num { color: var(--crt-dim); font-size: 2.3vw; margin-top: 0.5vh; }
+#series-popup .sp-d-title { color: var(--crt-accent); font-size: 2.8vw; font-weight: bold; }
+#series-popup .sp-d-state { font-size: 2.3vw; }
+#series-popup .sp-d-state--ready { color: var(--crt-f1); }
+#series-popup .sp-d-state--downloading { color: var(--crt-f3); }
+#series-popup .sp-d-state--missing { color: var(--crt-accent); }
+#series-popup .sp-d-state--error { color: #e07a7a; }
+#series-popup .sp-d-action .crt-btn { width: 100%; text-align: center; margin-top: 0.4vh; }
+#series-popup .sp-d-overview {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--crt-text);
+  font-size: 2.15vw;
+  margin-top: 0.6vh;
+}
 
 /* Actions du bas (télécharger saison / série). */
 #series-popup .sp-actions {
