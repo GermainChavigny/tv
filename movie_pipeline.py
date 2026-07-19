@@ -416,7 +416,15 @@ class Torrent:
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
         params = lt.parse_magnet_uri(magnet)
         params.save_path = str(self.downloads_dir)
-        return self.session.add_torrent(params)
+        handle = self.session.add_torrent(params)
+        # Téléchargement séquentiel : les pièces (donc les fichiers, donc les
+        # épisodes) arrivent dans l'ordre → l'épisode 1 d'un pack est complet avant
+        # le 2, on peut regarder au fur et à mesure.
+        try:
+            handle.set_sequential_download(True)
+        except Exception:
+            pass
+        return handle
 
     def remove(self, handle, delete_files=False):
         if self.session and handle:
@@ -521,8 +529,12 @@ class JobWorker:
         self.on_pack_done = None
         # Deux étages : plusieurs TÉLÉCHARGEMENTS en parallèle (réseau) mais UN
         # SEUL TRANSCODAGE à la fois (le mini-PC ne tient pas 2 ffmpeg lourds).
-        self.dl_queue = queue.Queue()   # ids à télécharger (film ou pack)
-        self.tc_queue = queue.Queue()   # ids à transcoder (film ou épisode)
+        # File de téléchargement PRIORISÉE par (saison, épisode) : les épisodes à
+        # la numérotation la plus faible partent en premier quand un slot se libère.
+        self.dl_queue = queue.PriorityQueue()  # (priority, seq, id)
+        self.tc_queue = queue.Queue()          # ids à transcoder (film ou épisode)
+        self._seq = 0
+        self._seq_lock = threading.Lock()
         self.cancelled = set()
         self._transcoding_id = None     # id en cours de transcodage (pour l'annulation)
         for _ in range(max(1, download_slots)):
@@ -532,9 +544,28 @@ class JobWorker:
     # ----- API -----
 
     def enqueue(self, movie_id):
-        """Point d'entrée d'un job : commence toujours par l'étage téléchargement."""
+        """Point d'entrée d'un job : commence toujours par l'étage téléchargement,
+        avec une priorité par (saison, épisode) — plus petit = plus prioritaire."""
         self.cancelled.discard(movie_id)
-        self.dl_queue.put(movie_id)
+        priority = self._priority(self.library.get(movie_id) or {})
+        with self._seq_lock:
+            self._seq += 1
+            seq = self._seq
+        self.dl_queue.put((priority, seq, movie_id))
+
+    @staticmethod
+    def _priority(entry):
+        """Clé de priorité : films = 0 (explicites) ; séries = saison*1000+épisode
+        (le plus bas d'abord ; pour un pack, l'épisode minimum de ses cibles)."""
+        t = entry.get('type')
+        if t == 'episode':
+            return (entry.get('season') or 0) * 1000 + (entry.get('episode') or 0)
+        if t == 'pack':
+            tgs = entry.get('targets') or []
+            if tgs:
+                return min(x['season'] * 1000 + x['episode'] for x in tgs)
+            return (entry.get('season') or 0) * 1000
+        return 0  # film
 
     def cancel(self, movie_id):
         """Annule un job (en attente, en téléchargement ou en transcodage)."""
@@ -584,7 +615,7 @@ class JobWorker:
     def _download_loop(self):
         """Étage téléchargement (plusieurs threads en parallèle)."""
         while True:
-            jid = self.dl_queue.get()
+            _priority, _seq, jid = self.dl_queue.get()
             if jid in self.cancelled:
                 continue
             entry = self.library.get(jid)
