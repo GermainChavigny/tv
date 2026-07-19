@@ -992,11 +992,23 @@ body {
   padding: 1.74vh var(--crt-safe-x);
 }
 
+/* Ligne du haut : invite (gauche) + bascule Film/Série (droite). */
+#virtual-keyboard .vk-toprow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 1.11vw;
+  margin-bottom: 0.7vh;
+}
 #virtual-keyboard .vk-prompt {
   font-size: 2.65vw;
   color: var(--crt-dim);
   text-transform: uppercase;
-  margin-bottom: 0.7vh;
+}
+#virtual-keyboard .vk-kind {
+  flex: 0 0 auto;
+  font-size: 2.5vw;
+  padding: 0.6vh 1.4vw;
 }
 
 #virtual-keyboard .vk-display {

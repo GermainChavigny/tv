@@ -30,6 +30,7 @@ export class VirtualKeyboard extends EventEmitter {
     this.input = '';
     this.isOpen = false;
     this.purpose = 'search'; // qui a ouvert le clavier (route le 'submit')
+    this.searchKind = 'movie'; // 'movie' | 'series' (recherche film ou série)
   }
 
   init() {
@@ -49,7 +50,10 @@ export class VirtualKeyboard extends EventEmitter {
         <span class="crt-clock-wrap"><span class="crt-clock"></span><span class="crt-weather"></span><span class="crt-date"></span></span>
       </div>
       <div class="vk-panel">
-        <div class="vk-prompt"></div>
+        <div class="vk-toprow">
+          <div class="vk-prompt"></div>
+          <button class="crt-btn vk-kind" data-action="kind" type="button"></button>
+        </div>
         <div class="vk-display"><span class="vk-text"></span><span class="vk-caret">|</span></div>
         <div class="vk-keys">${keysHtml}</div>
         <div class="vk-row vk-actions">
@@ -67,6 +71,7 @@ export class VirtualKeyboard extends EventEmitter {
     this.titleEl = root.querySelector('.crt-title');
     this.promptEl = root.querySelector('.vk-prompt');
     this.submitEl = root.querySelector('.vk-submit');
+    this.kindBtn = root.querySelector('.vk-kind');
 
     wireFooterNav(root, this);
     root.addEventListener('click', (e) => {
@@ -92,9 +97,17 @@ export class VirtualKeyboard extends EventEmitter {
     this.titleEl.textContent = opts.title || 'Search';
     this.promptEl.textContent = opts.prompt || 'Search for:';
     this.submitEl.textContent = opts.submitLabel || 'Search';
+    // Bascule Film/Série : seulement pour la recherche (pas les mots-clés advisor).
+    const isSearch = this.purpose === 'search';
+    this.kindBtn.style.display = isSearch ? '' : 'none';
+    this._renderKind();
     this.render();
     this.isOpen = true;
     this.root.classList.add('open');
+  }
+
+  _renderKind() {
+    this.kindBtn.textContent = this.searchKind === 'series' ? '▸ Series' : '▸ Movies';
   }
 
   close() {
@@ -118,6 +131,10 @@ export class VirtualKeyboard extends EventEmitter {
       case 'clear':
         this.input = '';
         break;
+      case 'kind':
+        this.searchKind = this.searchKind === 'series' ? 'movie' : 'series';
+        this._renderKind();
+        return;
       case 'cancel':
         this.close();
         this.emit('close');

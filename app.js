@@ -489,7 +489,9 @@ function attachMovieHandlers() {
     if (keyboard.purpose === 'advisor') {
       advisor.setKeywords(text); // l'advisor est resté ouvert dessous
     } else {
-      downloader.search(text);
+      // Le type (film/série) est choisi sur le clavier → passé explicitement
+      // (évite que le mode reste « collé » sur série après une recherche série).
+      downloader.search(text, keyboard.searchKind);
     }
   });
 
