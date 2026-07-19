@@ -577,6 +577,11 @@ class JobWorker:
                     "status": entry.get('status'),
                     "progress": entry.get('progress', {}),
                     "error": entry.get('error'),
+                    # Contexte série pour que le front route/filtre (film vs pack/épisode).
+                    "type": entry.get('type'),
+                    "showId": entry.get('showId'),
+                    "season": entry.get('season'),
+                    "episode": entry.get('episode'),
                 }
         return jobs
 

@@ -11,6 +11,7 @@ import time
 
 from movie_pipeline import Library, JobWorker, atomic_write_json
 from movie_sources import Indexer, Tmdb, Subtitles, load_secrets, clean_torrent_title
+from movie_series import SeriesManager
 from movie_advisor import (
     AdvisorError, Advisor, Blacklist, Gemini, OpenAICompatible, clip_summary,
 )
@@ -236,6 +237,24 @@ def _slugify(title, year=None):
     return f"{slug}-{year}" if year else slug
 
 
+# Orchestrateur séries (TMDB TV + indexeur + worker). Branche on_pack_done pour
+# le repli épisode-unique. Dépend de _slugify, donc instancié ici.
+series = SeriesManager(library, tmdb, indexer, worker, _slugify, Path(POSTERS_DIR))
+
+
+def _recheck_loop():
+    """Re-check périodique des séries en cours de diffusion (nouveaux épisodes)."""
+    while True:
+        try:
+            series.recheck_airing()
+        except Exception as err:
+            print(f"[Series] recheck échec : {err}")
+        time.sleep(12 * 3600)
+
+
+threading.Thread(target=_recheck_loop, daemon=True).start()
+
+
 # --- MOVIE ADVISOR : RECOMMANDATIONS IA ---
 
 @app.route('/advisor/recommend', methods=['POST'])
@@ -425,6 +444,81 @@ def movies_cancel():
     return jsonify({"status": "cancelled", "id": movie_id})
 
 
+# --- SÉRIES ---
+
+@app.route('/series/search', methods=['POST'])
+def series_search():
+    """Recherche de séries via TMDB TV. Body : {"query": "..."}."""
+    query = (request.json or {}).get('query', '').strip()
+    if not query:
+        return jsonify({"error": "query vide"}), 400
+    if not tmdb.available():
+        return jsonify({"error": "TMDB non configuré (tv_data/secrets.json)"}), 503
+    return jsonify(tmdb.search_tv_all(query))
+
+
+@app.route('/series/add', methods=['POST'])
+def series_add():
+    """Enregistre une série au catalogue. Body : {"tmdbId": 1396}."""
+    tmdb_id = (request.json or {}).get('tmdbId')
+    if not tmdb_id:
+        return jsonify({"error": "tmdbId requis"}), 400
+    show = series.add_show(tmdb_id)
+    if not show:
+        return jsonify({"error": "Série introuvable sur TMDB"}), 404
+    return jsonify({"status": "ok", "id": show['id'], "show": show})
+
+
+@app.route('/series/<show_id>', methods=['GET'])
+def series_get(show_id):
+    """Entrée série du catalogue (structure des saisons)."""
+    show = library.get(show_id)
+    if not show or show.get('type') != 'series':
+        return jsonify({"error": "Série inconnue"}), 404
+    return jsonify(show)
+
+
+@app.route('/series/<show_id>/season/<int:season>', methods=['GET'])
+def series_season(show_id, season):
+    """Épisodes d'une saison + état local (missing/downloading/ready/error)."""
+    view = series.season_view(show_id, season)
+    if view is None:
+        return jsonify({"error": "Série inconnue"}), 404
+    return jsonify(view)
+
+
+@app.route('/series/download', methods=['POST'])
+def series_download():
+    """
+    Lance le téléchargement d'un épisode / d'une saison / de la série.
+    Body : {"showId": "...", "scope": "episode|season|series", "season"?, "episode"?}.
+    Les recherches d'indexeur peuvent être nombreuses (saison/série) → exécutées
+    en arrière-plan ; le front suit l'état via /series/<id>/season/<n>.
+    """
+    data = request.json or {}
+    show_id = data.get('showId')
+    scope = data.get('scope')
+    if not show_id or scope not in ('episode', 'season', 'series'):
+        return jsonify({"error": "showId + scope (episode|season|series) requis"}), 400
+    if not library.get(show_id):
+        return jsonify({"error": "Série inconnue"}), 404
+    if not indexer.available():
+        return jsonify({"error": "Aucun indexeur configuré (tv_data/secrets.json)"}), 503
+    threading.Thread(
+        target=series.download,
+        args=(show_id, scope, data.get('season'), data.get('episode')),
+        daemon=True,
+    ).start()
+    return jsonify({"status": "queued"})
+
+
+@app.route('/series/recheck', methods=['POST'])
+def series_recheck():
+    """Force un re-check des séries en cours (arrière-plan)."""
+    threading.Thread(target=series.recheck_airing, daemon=True).start()
+    return jsonify({"status": "ok"})
+
+
 # --- SERVIR UN FICHIER VIDÉO ---
 @app.route('/get-movie/<filename>', methods=['GET'])
 def get_movie(filename):
@@ -460,6 +554,9 @@ def get_poster(movie_id):
 
     entry = library.get(movie_id)
     poster_name = (entry or {}).get('poster') if entry else None
+    # Épisode sans affiche propre → retombe sur l'affiche de sa série.
+    if entry and not poster_name and entry.get('type') == 'episode' and entry.get('showId'):
+        poster_name = (library.get(entry['showId']) or {}).get('poster')
     poster_path = Path(POSTERS_DIR) / poster_name if poster_name else None
 
     if not poster_path or not poster_path.exists():
