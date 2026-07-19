@@ -202,6 +202,7 @@ class SeriesManager:
         # des épisodes pas encore extraits en entrée propre).
         pack = next((e for e in lib.values()
                      if e.get('type') == 'pack' and e.get('showId') == show_id
+                     and e.get('status') in ('queued', 'downloading', 'transcoding')
                      and (e.get('scope') == 'series' or e.get('season') == season)), None)
         pack_dl = (pack.get('progress', {}) or {}).get('download', 0) if pack else 0
         out = []

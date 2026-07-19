@@ -380,107 +380,98 @@ class Transcoder:
 
 class Torrent:
     """
-    Téléchargement d'un magnet via libtorrent, dans un dossier de staging.
-
-    Bloquant : download() tourne jusqu'à complétion et renvoie le chemin du plus
-    gros fichier vidéo. La progression remonte via callback. Les données de
-    reprise (fast-resume) sont sur disque : un torrent interrompu par un reboot
-    reprend là où il en était (libtorrent revérifie les pièces déjà présentes).
+    Téléchargements via libtorrent sur UNE session partagée. Chaque téléchargement
+    utilise son PROPRE handle (passé en argument) → plusieurs téléchargements
+    simultanés sont possibles et thread-safe. La progression remonte par callback ;
+    l'annulation se fait via un callable `cancelled`. Fast-resume sur disque.
     """
+
+    # Taille mini d'un fichier vidéo retenu : écarte les "sample" (~20-50 Mo).
+    MIN_VIDEO_BYTES = 60 * 1024 * 1024
 
     def __init__(self, downloads_dir):
         self.downloads_dir = Path(downloads_dir)
         self.session = None
-        self.handle = None
-        self._cancelled = False
+        self._lock = threading.Lock()
 
     def available(self):
         return lt is not None
 
     def _ensure_session(self):
-        if self.session is None:
-            # Ports d'écoute + DHT pour trouver des pairs sans tracker central.
-            self.session = lt.session({
-                'listen_interfaces': '0.0.0.0:6881,[::]:6881',
-                'enable_dht': True,
-                'enable_lsd': True,   # découverte de pairs sur le réseau local
-                'user_agent': 'tv-app/1.0',
-            })
+        with self._lock:
+            if self.session is None:
+                # Ports d'écoute + DHT pour trouver des pairs sans tracker central.
+                self.session = lt.session({
+                    'listen_interfaces': '0.0.0.0:6881,[::]:6881',
+                    'enable_dht': True,
+                    'enable_lsd': True,   # découverte de pairs sur le réseau local
+                    'user_agent': 'tv-app/1.0',
+                })
 
-    def cancel(self):
-        self._cancelled = True
-
-    # Taille mini d'un fichier vidéo retenu : écarte les "sample" (~20-50 Mo).
-    MIN_VIDEO_BYTES = 60 * 1024 * 1024
-
-    def download(self, magnet, progress_cb=None, poll=1.0):
-        """
-        Télécharge `magnet` et renvoie le Path du plus gros fichier vidéo (usage
-        film / épisode unique). Lève RuntimeError si annulé, libtorrent absent,
-        ou aucune vidéo trouvée.
-        """
-        self._run_download(magnet, progress_cb, poll)
-        video = self._largest_video()
-        self._remove(delete_files=False)  # on ne re-partage pas, mais on garde les fichiers
-        if not video:
-            raise RuntimeError("Aucun fichier vidéo dans le torrent")
-        return video
-
-    def download_all(self, magnet, progress_cb=None, poll=1.0, meta_timeout=120):
-        """
-        Télécharge `magnet` et renvoie la liste de TOUS les fichiers vidéo (usage
-        pack saison/série). Écarte les samples. Lève si annulé/aucune vidéo.
-        `meta_timeout` : délai max pour obtenir les métadonnées (torrent privé/mort
-        → on abandonne vite pour tenter un autre candidat).
-        """
-        self._run_download(magnet, progress_cb, poll, meta_timeout)
-        videos = self._list_videos()
-        self._remove(delete_files=False)
-        if not videos:
-            raise RuntimeError("Aucun fichier vidéo dans le torrent")
-        return videos
-
-    def _run_download(self, magnet, progress_cb, poll, meta_timeout=120):
-        """Boucle commune : métadonnées puis téléchargement jusqu'à complétion."""
+    def add(self, magnet):
+        """Ajoute un magnet à la session partagée et renvoie son handle."""
         if lt is None:
             raise RuntimeError("libtorrent non disponible (apt install python3-libtorrent)")
-
-        self._cancelled = False
         self._ensure_session()
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
-
         params = lt.parse_magnet_uri(magnet)
         params.save_path = str(self.downloads_dir)
-        self.handle = self.session.add_torrent(params)
-        h = self.handle
+        return self.session.add_torrent(params)
 
-        # 1) Récupération des métadonnées (liste des fichiers) via DHT/pairs
+    def remove(self, handle, delete_files=False):
+        if self.session and handle:
+            try:
+                flags = lt.session.delete_files if delete_files else 0
+                self.session.remove_torrent(handle, flags)
+            except Exception:
+                pass
+
+    def _run(self, handle, progress_cb, poll, meta_timeout, cancelled):
+        """Attend les métadonnées puis télécharge jusqu'à complétion (sur `handle`)."""
+        is_cancelled = cancelled or (lambda: False)
         meta_deadline = time.monotonic() + meta_timeout
-        while not h.status().has_metadata:
-            if self._cancelled:
-                self._remove()
+        while not handle.status().has_metadata:
+            if is_cancelled():
+                self.remove(handle, delete_files=True)
                 raise RuntimeError("Annulé")
             if time.monotonic() > meta_deadline:
-                self._remove()
+                self.remove(handle, delete_files=True)
                 raise RuntimeError("Métadonnées introuvables (magnet mort ?)")
             time.sleep(0.5)
-
-        # 2) Téléchargement effectif
         while True:
-            s = h.status()
-            if self._cancelled:
-                self._remove()
+            s = handle.status()
+            if is_cancelled():
+                self.remove(handle, delete_files=True)
                 raise RuntimeError("Annulé")
             if progress_cb:
                 progress_cb(min(1.0, s.progress))
-            # is_finished : toutes les pièces voulues sont là
             if getattr(s, 'is_finished', False) or s.progress >= 1.0:
                 break
             time.sleep(poll)
 
-    def _video_files(self):
+    def download(self, magnet, progress_cb=None, poll=1.0, meta_timeout=120, cancelled=None):
+        """Télécharge et renvoie le Path du plus gros fichier vidéo (film/épisode)."""
+        handle = self.add(magnet)
+        self._run(handle, progress_cb, poll, meta_timeout, cancelled)
+        video = self._largest_video(handle)
+        self.remove(handle, delete_files=False)  # on garde les fichiers (pas de re-seed)
+        if not video:
+            raise RuntimeError("Aucun fichier vidéo dans le torrent")
+        return video
+
+    def download_all(self, magnet, progress_cb=None, poll=1.0, meta_timeout=120, cancelled=None):
+        """Télécharge et renvoie TOUS les fichiers vidéo (pack saison/série)."""
+        handle = self.add(magnet)
+        self._run(handle, progress_cb, poll, meta_timeout, cancelled)
+        videos = self._list_videos(handle)
+        self.remove(handle, delete_files=False)
+        if not videos:
+            raise RuntimeError("Aucun fichier vidéo dans le torrent")
+        return videos
+
+    def _video_files(self, handle):
         """[(chemin absolu, taille), …] pour chaque fichier vidéo (samples exclus)."""
-        ti = self.handle.torrent_file()
+        ti = handle.torrent_file()
         if ti is None:
             return []
         files = ti.files()
@@ -495,23 +486,13 @@ class Torrent:
             out.append((self.downloads_dir / path, size))
         return out
 
-    def _largest_video(self):
-        """Chemin absolu du plus gros fichier vidéo téléchargé."""
-        vids = self._video_files()
+    def _largest_video(self, handle):
+        vids = self._video_files(handle)
         return max(vids, key=lambda t: t[1])[0] if vids else None
 
-    def _list_videos(self):
+    def _list_videos(self, handle):
         """Tous les fichiers vidéo, triés par nom (mapping épisode → SxxExx)."""
-        return [p for p, _ in sorted(self._video_files(), key=lambda t: str(t[0]).lower())]
-
-    def _remove(self, delete_files=True):
-        if self.session and self.handle:
-            try:
-                flags = lt.session.delete_files if delete_files else 0
-                self.session.remove_torrent(self.handle, flags)
-            except Exception:
-                pass
-            self.handle = None
+        return [p for p, _ in sorted(self._video_files(handle), key=lambda t: str(t[0]).lower())]
 
 
 class JobWorker:
@@ -526,7 +507,8 @@ class JobWorker:
     `subtitles_fetcher` (optionnel) est injecté par api.py (OpenSubtitles).
     """
 
-    def __init__(self, library, movies_dir, downloads_dir, subtitles_fetcher=None):
+    def __init__(self, library, movies_dir, downloads_dir, subtitles_fetcher=None,
+                 download_slots=3):
         self.library = library
         self.movies_dir = Path(movies_dir)
         self.downloads_dir = Path(downloads_dir)
@@ -534,40 +516,50 @@ class JobWorker:
         self.transcoder = Transcoder()
         self.torrent = Torrent(downloads_dir)
         self.subtitles_fetcher = subtitles_fetcher
-        # Callback appelé en fin de job "pack" (série/saison) : (pack, fulfilled,
-        # missing) → l'orchestrateur peut lancer le repli épisode-unique. Injecté
-        # par api.py (movie_series).
+        # Callback de fin de pack (série/saison) : (pack, fulfilled, missing) →
+        # repli épisode-unique. Injecté par api.py (movie_series).
         self.on_pack_done = None
-        self.queue = queue.Queue()
-        self.current_id = None
-        self.cancelled = set()  # ids annulés (jobs en attente ou en cours)
-        self.thread = threading.Thread(target=self._run, daemon=True)
-        self.thread.start()
+        # Deux étages : plusieurs TÉLÉCHARGEMENTS en parallèle (réseau) mais UN
+        # SEUL TRANSCODAGE à la fois (le mini-PC ne tient pas 2 ffmpeg lourds).
+        self.dl_queue = queue.Queue()   # ids à télécharger (film ou pack)
+        self.tc_queue = queue.Queue()   # ids à transcoder (film ou épisode)
+        self.cancelled = set()
+        self._transcoding_id = None     # id en cours de transcodage (pour l'annulation)
+        for _ in range(max(1, download_slots)):
+            threading.Thread(target=self._download_loop, daemon=True).start()
+        threading.Thread(target=self._transcode_loop, daemon=True).start()
 
     # ----- API -----
 
     def enqueue(self, movie_id):
+        """Point d'entrée d'un job : commence toujours par l'étage téléchargement."""
         self.cancelled.discard(movie_id)
-        self.queue.put(movie_id)
+        self.dl_queue.put(movie_id)
 
     def cancel(self, movie_id):
-        """Annule un job (en attente ou en cours)."""
+        """Annule un job (en attente, en téléchargement ou en transcodage)."""
         self.cancelled.add(movie_id)
-        if movie_id == self.current_id:
+        # Le téléchargement s'arrête via le callable `cancelled` de sa boucle.
+        # Le transcodage : on ne tue ffmpeg QUE si c'est bien ce job qui transcode.
+        if movie_id == self._transcoding_id:
             self.transcoder.cancel()
-            self.torrent.cancel()
         self.library.patch(movie_id, {"status": "error", "error": "Annulé"})
 
     def resume_pending(self):
         """
-        À appeler au démarrage : re-enfile les jobs interrompus par un reboot.
-        Un transcodage repart de zéro (pas de reprise partielle possible).
+        Au démarrage : re-enfile les films et packs interrompus par un reboot (au
+        téléchargement ; le pack saute les épisodes déjà prêts et recrée les autres).
+        Les entrées `episode` non finies sont ignorées ici : leur pack, réenfilé,
+        les reprend — évite un double traitement.
         """
-        for movie_id, entry in self.library.all().items():
-            if entry.get('status') in ('queued', 'transcoding', 'downloading', 'fetching-subs'):
-                print(f"[Worker] Reprise du job interrompu : {movie_id}")
-                self.library.patch(movie_id, {"status": "queued"})
-                self.enqueue(movie_id)
+        for jid, entry in self.library.all().items():
+            if entry.get('status') not in ('queued', 'transcoding', 'downloading', 'fetching-subs'):
+                continue
+            if entry.get('type') == 'episode':
+                continue  # repris via son pack
+            print(f"[Worker] Reprise du job : {jid}")
+            self.library.patch(jid, {"status": "queued"})
+            self.enqueue(jid)
 
     def active_jobs(self):
         """Snapshot léger pour le polling /movies/status."""
@@ -589,22 +581,79 @@ class JobWorker:
 
     # ----- boucle worker -----
 
-    def _run(self):
+    def _download_loop(self):
+        """Étage téléchargement (plusieurs threads en parallèle)."""
         while True:
-            movie_id = self.queue.get()
-            if movie_id in self.cancelled:
+            jid = self.dl_queue.get()
+            if jid in self.cancelled:
                 continue
-            entry = self.library.get(movie_id)
+            entry = self.library.get(jid)
             if not entry:
                 continue
-            self.current_id = movie_id
             try:
-                self._process(movie_id, entry)
-            except Exception as err:  # le worker ne doit jamais mourir
-                print(f"[Worker] Job {movie_id} en échec : {err}")
-                self.library.patch(movie_id, {"status": "error", "error": str(err)})
+                if entry.get('type') == 'pack':
+                    self._download_pack(jid, entry)
+                else:
+                    self._download_movie(jid, entry)
+            except Exception as err:  # les threads ne meurent jamais
+                print(f"[Worker] Téléchargement {jid} échoué : {err}")
+                self.library.patch(jid, {"status": "error", "error": str(err)})
+
+    def _transcode_loop(self):
+        """Étage transcodage (UN seul thread → un ffmpeg lourd à la fois)."""
+        while True:
+            jid = self.tc_queue.get()
+            entry = self.library.get(jid)
+            if jid in self.cancelled or not entry:
+                if entry:
+                    self._after_transcode(jid, entry)
+                continue
+            try:
+                src = self._resolve_src(entry)
+                if not src or not Path(src).exists():
+                    raise RuntimeError(f"Fichier source introuvable : {src}")
+                self._transcoding_id = jid
+                self._finalize_file(jid, entry, Path(src),
+                                    entry.get('season'), entry.get('episode'))
+            except Exception as err:
+                print(f"[Worker] Transcodage {jid} échoué : {err}")
+                self.library.patch(jid, {"status": "error", "error": str(err)})
             finally:
-                self.current_id = None
+                self._transcoding_id = None
+                self._after_transcode(jid, self.library.get(jid) or entry)
+
+    def _resolve_src(self, entry):
+        """Chemin du fichier source à transcoder (staging torrent ou fichier local)."""
+        sf = entry.get('stagingFile')
+        if sf and Path(sf).exists():
+            return sf
+        ls = entry.get('localSource')
+        if ls:
+            p = Path(ls)
+            return str(p if p.is_absolute() else self.movies_dir / p)
+        return None
+
+    def _after_transcode(self, jid, entry):
+        """Nettoyage post-transcodage : staging film, ou décompte des épisodes du pack."""
+        if not entry:
+            return
+        if entry.get('type') == 'episode':
+            pack_id = entry.get('packId')
+            pack = self.library.get(pack_id) if pack_id else None
+            if not pack:
+                return
+            left = (pack.get('pendingEpisodes') or 1) - 1
+            if left <= 0:
+                # Dernier épisode du pack → purge le staging et retire le pack.
+                self._cleanup_pack([Path(p) for p in (pack.get('stagingFiles') or [])])
+                self.library.delete(pack_id)
+                print(f"[Worker] Pack {pack_id} terminé.")
+            else:
+                self.library.patch(pack_id, {"pendingEpisodes": left})
+        else:  # film
+            sf = entry.get('stagingFile')
+            if sf:
+                self._cleanup_staging(Path(sf))
 
     def _progress_writer(self, movie_id, entry, key):
         """Callback de progression throttlé (écrit library.json ~toutes les 2s)."""
@@ -620,28 +669,20 @@ class JobWorker:
                 })
         return cb
 
-    def _process(self, movie_id, entry):
-        # Job "pack" série/saison : traitement multi-fichiers dédié.
-        if entry.get('type') == 'pack':
-            return self._process_pack(movie_id, entry)
-
-        staging = None  # fichier téléchargé à nettoyer en fin de job
-
-        # --- 1. Source : torrent (magnet) ou fichier local ---
+    def _download_movie(self, movie_id, entry):
+        """Étage 1 pour un film / épisode unique : récupère la source puis passe
+        à l'étage transcodage."""
         if entry.get('magnet'):
             staged = entry.get('stagingFile')
             if staged and Path(staged).exists():
-                # Déjà téléchargé (job repris en cours de transcodage) : on saute
-                # l'étape torrent et on réutilise le fichier présent.
-                src = Path(staged)
-                staging = src
+                src = Path(staged)  # déjà téléchargé (reprise)
             else:
                 self.library.patch(movie_id, {"status": "downloading", "error": None})
                 src = self.torrent.download(
                     entry['magnet'],
                     progress_cb=self._progress_writer(movie_id, entry, 'download'),
+                    cancelled=lambda: movie_id in self.cancelled,
                 )
-                staging = src
                 self.library.patch(movie_id, {"stagingFile": str(src)})
         else:
             src = entry.get('localSource')
@@ -652,19 +693,14 @@ class JobWorker:
                 src = self.movies_dir / src
         if not Path(src).exists():
             raise RuntimeError(f"Fichier source introuvable : {src}")
-
         if movie_id in self.cancelled:
             return
-
-        # Sous-titres + transcodage + finalisation (partagé avec les épisodes de pack).
-        self._finalize_file(movie_id, entry, src,
-                            entry.get('season'), entry.get('episode'))
-
-        if movie_id in self.cancelled:
-            return
-        # Nettoyage du staging torrent (on ne re-partage pas)
-        if staging:
-            self._cleanup_staging(staging)
+        # Handoff vers l'étage transcodage (sérialisé).
+        self.library.patch(movie_id, {
+            "status": "transcoding",
+            "progress": {**entry.get('progress', {}), "transcode": 0},
+        })
+        self.tc_queue.put(movie_id)
 
     def _finalize_file(self, entry_id, entry, src, season=None, episode=None):
         """Sous-titres + transcodage + finalisation d'UN fichier vers son entrée.
@@ -723,17 +759,17 @@ class JobWorker:
         })
         print(f"[Worker] {entry_id} prêt ({dst.name}, {round(duration)}s)")
 
-    def _process_pack(self, pack_id, entry):
+    def _download_pack(self, pack_id, entry):
         """
-        Job pack série/saison : télécharge le torrent, mappe chaque fichier vidéo
-        à un épisode cible (SxxExx), finalise une entrée `episode` par fichier
-        trouvé. Les cibles absentes du pack partent au repli via on_pack_done.
+        Étage 1 pour un pack série/saison : télécharge (candidats successifs),
+        mappe chaque fichier vidéo à un épisode cible (SxxExx), crée une entrée
+        `episode` par fichier trouvé et l'envoie à l'étage transcodage. Les cibles
+        absentes du pack partent au repli épisode-unique.
         """
         targets = entry.get('targets', [])
         self.library.patch(pack_id, {"status": "downloading", "error": None})
-        # Essaie chaque torrent candidat (trié par seeders) jusqu'à en trouver un
-        # joignable : beaucoup de résultats viennent de trackers privés (peers
-        # inaccessibles sans passkey) → métadonnées introuvables, on passe au suivant.
+        # Essaie chaque torrent candidat (trié par seeders) : beaucoup viennent de
+        # trackers privés (peers inaccessibles sans passkey) → on passe au suivant.
         candidates = entry.get('candidates') or ([entry['magnet']] if entry.get('magnet') else [])
         videos, last_err = None, None
         for i, magnet in enumerate(candidates):
@@ -742,7 +778,7 @@ class JobWorker:
             try:
                 videos = self.torrent.download_all(
                     magnet, progress_cb=self._progress_writer(pack_id, entry, 'download'),
-                    meta_timeout=45,
+                    meta_timeout=45, cancelled=lambda: pack_id in self.cancelled,
                 )
                 break
             except RuntimeError as err:
@@ -753,7 +789,6 @@ class JobWorker:
             raise RuntimeError(str(last_err) if last_err else "Aucune source exploitable")
         if pack_id in self.cancelled:
             return
-        self.library.patch(pack_id, {"status": "transcoding"})
 
         # Mapping fichier → (saison, épisode) via le nom.
         by_key = {}
@@ -764,37 +799,46 @@ class JobWorker:
         print(f"[Worker] Pack {pack_id} : {len(videos)} fichiers, "
               f"{len(by_key)} épisodes reconnus / {len(targets)} visés")
 
-        fulfilled, missing = [], []
+        matched, missing = [], []
         for t in targets:
-            if pack_id in self.cancelled:
-                break
-            ep_id = t['episodeId']
-            existing = self.library.get(ep_id)
-            if existing and existing.get('status') == 'ready':
-                fulfilled.append(t)  # déjà obtenu (job repris) : on ne refait pas
-                continue
+            ex = self.library.get(t['episodeId'])
+            if ex and ex.get('status') == 'ready':
+                continue  # déjà obtenu (reprise) : on ne refait pas
             src = by_key.get((t['season'], t['episode']))
-            if not src:
-                missing.append(t)
-                continue
-            ep_entry = self._make_episode_entry(t, entry)
-            self.library.upsert(ep_entry)
-            try:
-                self._finalize_file(ep_id, ep_entry, src, t['season'], t['episode'])
-                fulfilled.append(t)
-            except Exception as err:
-                print(f"[Worker] Épisode {ep_id} en échec : {err}")
-                self.library.patch(ep_id, {"status": "error", "error": str(err)})
-                missing.append(t)
+            (matched if src else missing).append((t, src) if src else t)
 
-        # Tous les fichiers voulus sont sortis vers movies_dir → on peut purger.
-        self._cleanup_pack(videos)
-        self.library.delete(pack_id)
-        print(f"[Worker] Pack {pack_id} terminé : {len(fulfilled)} ok, {len(missing)} manquants")
+        if not matched:
+            # Rien à transcoder depuis ce pack : purge + repli sur les manquants.
+            self._cleanup_pack(videos)
+            self.library.delete(pack_id)
+            self._pack_fallback(entry, missing)
+            return
 
-        if self.on_pack_done and pack_id not in self.cancelled:
+        # pendingEpisodes AVANT d'enfiler : le transcodeur (mono-thread) ne doit
+        # pas terminer un épisode avant que le compteur soit posé. On mémorise les
+        # fichiers du pack pour la purge une fois tous les épisodes transcodés.
+        self.library.patch(pack_id, {
+            "status": "transcoding",
+            "pendingEpisodes": len(matched),
+            "stagingFiles": [str(p) for p in videos],
+        })
+        for t, src in matched:
+            ep = self._make_episode_entry(t, entry)
+            ep["stagingFile"] = str(src)
+            ep["packId"] = pack_id
+            ep["status"] = "transcoding"
+            ep["progress"] = {"transcode": 0}
+            self.library.upsert(ep)
+            self.tc_queue.put(ep['id'])
+
+        # Repli épisode-unique sur les manquants (n'a pas besoin des fichiers).
+        self._pack_fallback(entry, missing)
+
+    def _pack_fallback(self, pack, missing):
+        """Déclenche le repli épisode-unique de l'orchestrateur sur `missing`."""
+        if self.on_pack_done and pack.get('id') not in self.cancelled and missing:
             try:
-                self.on_pack_done(entry, fulfilled, missing)
+                self.on_pack_done(pack, [], missing)
             except Exception as err:
                 print(f"[Worker] on_pack_done échec : {err}")
 
