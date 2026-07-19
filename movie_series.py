@@ -198,13 +198,17 @@ class SeriesManager:
             return None
         eps = self.tmdb.tv_season(show.get('tmdbId'), season) or []
         lib = self.library.all()
-        # Pack actif couvrant cette saison (donne la progression de téléchargement
-        # des épisodes pas encore extraits en entrée propre).
-        pack = next((e for e in lib.values()
-                     if e.get('type') == 'pack' and e.get('showId') == show_id
-                     and e.get('status') in ('queued', 'downloading', 'transcoding')
-                     and (e.get('scope') == 'series' or e.get('season') == season)), None)
-        pack_dl = (pack.get('progress', {}) or {}).get('download', 0) if pack else 0
+        # Épisodes réellement CIBLÉS par un pack actif → (season, episode) : progrès
+        # DL du pack. Un pack « épisode » ne couvre qu'une cible ; un pack saison/
+        # série couvre chacune de ses cibles. Évite d'afficher toute la saison « en
+        # cours » quand un seul épisode se télécharge.
+        covered = {}
+        for e in lib.values():
+            if (e.get('type') == 'pack' and e.get('showId') == show_id
+                    and e.get('status') in ('queued', 'downloading', 'transcoding')):
+                dl = (e.get('progress', {}) or {}).get('download', 0)
+                for t in e.get('targets', []):
+                    covered[(t['season'], t['episode'])] = dl
         out = []
         for e in eps:
             ep = e.get('ep')
@@ -225,8 +229,8 @@ class SeriesManager:
                     state, phase, progress = 'downloading', 'downloading', p.get('download', 0)
                 else:  # queued / fetching-subs
                     state, phase = 'downloading', st
-            elif pack:
-                state, phase, progress = 'downloading', 'downloading', pack_dl
+            elif (season, ep) in covered:
+                state, phase, progress = 'downloading', 'downloading', covered[(season, ep)]
             out.append({
                 "ep": ep, "title": e.get('title'), "overview": e.get('overview'),
                 "still": e.get('still'), "state": state,
