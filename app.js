@@ -518,6 +518,9 @@ function attachMovieHandlers() {
 
   // Suppression d'un film depuis le volet détail.
   browser.on('delete', (entry) => {
+    // Si le film est encore en cours de téléchargement/conversion, sa
+    // disparition des jobs actifs ne doit PAS déclencher l'annonce « Film prêt ».
+    downloader.ignoreJob(entry.id);
     apiClient.deleteMovie(entry.id)
       .then(() => browser.open())
       .catch((err) => console.warn('Suppression échouée :', err));

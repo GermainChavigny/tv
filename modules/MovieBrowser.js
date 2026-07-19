@@ -197,10 +197,14 @@ export class MovieBrowser extends EventEmitter {
     }
     const entry = id ? this.library.get(id) : null;
     this.renderDetail(entry);
-    // Cascade rétro UNIQUEMENT sur un vrai changement de sélection. Les
-    // rafraîchissements de statut (/movies/status, chaque seconde) re-render le
-    // volet via renderDetail() sans passer par select() → pas d'animation.
-    if (changed && entry) reveal(this.detailEl, { selector: '.mb-detail > *' });
+    // UNIQUEMENT sur un vrai changement de sélection : remonter le volet en haut
+    // + cascade rétro. Les rafraîchissements de statut (/movies/status, chaque
+    // seconde) re-render via renderDetail() sans passer par select() → ni scroll
+    // ni animation parasites (on garde la position de lecture de la description).
+    if (changed && entry) {
+      this.detailEl.scrollTop = 0;
+      reveal(this.detailEl, { selector: '.mb-detail > *' });
+    }
   }
 
   /** Remplit le volet détail (affiche, titre/année, progression, PLAY/DELETE). */
@@ -232,10 +236,6 @@ export class MovieBrowser extends EventEmitter {
       </div>
       ${entry.overview ? `<div class="mb-d-overview">${escapeHtml(entry.overview)}</div>` : ''}
     `;
-    // Nouvelle sélection : revenir en haut du volet (sinon on garde le scroll
-    // de la description du film précédent).
-    this.detailEl.scrollTop = 0;
-
     const posterBox = this.detailEl.querySelector('.mb-poster');
     const img = posterBox.querySelector('img');
     img.addEventListener('error', () => posterBox.classList.add('no-poster'));

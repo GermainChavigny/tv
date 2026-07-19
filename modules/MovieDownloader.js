@@ -37,6 +37,9 @@ export class MovieDownloader extends EventEmitter {
     this.root = null;
     this.pollTimer = null;
     this.knownJobs = {}; // id -> status, pour détecter les transitions
+    // Jobs supprimés par l'utilisateur : leur disparition NE doit pas déclencher
+    // l'annonce « Film prêt » (une suppression n'est pas une fin de conversion).
+    this.ignoredJobs = new Set();
     this.lastResults = [];
     this.sortIndex = 0;
   }
@@ -220,7 +223,6 @@ export class MovieDownloader extends EventEmitter {
         return;
       }
       this.emit('started', res.id);
-      if (this.voice) this.voice.announce(`Téléchargement de ${movie.title}`, 0.8);
       this.close();
       this.startPolling();
     } catch (err) {
@@ -243,14 +245,22 @@ export class MovieDownloader extends EventEmitter {
       // Pilote l'affichage de progression dans la grille (tuiles).
       this.emit('tick', jobs);
 
-      // Détecte les transitions -> ready (un job connu qui disparaît des actifs)
+      // Détecte les transitions -> ready (un job connu qui disparaît des actifs).
+      // Un job supprimé par l'utilisateur disparaît de la même manière : on le
+      // saute (pas d'annonce) via la liste des jobs ignorés.
       for (const id of Object.keys(this.knownJobs)) {
-        if (!jobs[id]) {
-          this.emit('ready', id);
-          if (this.voice) this.voice.announce('Film prêt', 0.8);
-        }
+        if (jobs[id]) continue;
+        if (this.ignoredJobs.has(id)) continue; // supprimé : pas de « Film prêt »
+        this.emit('ready', id);
+        if (this.voice) this.voice.announce('Film prêt', 0.8);
       }
       this.knownJobs = jobs;
+
+      // Purge les ids ignorés qui ne sont plus actifs (supprimés/terminés) pour
+      // ne pas accumuler. Ceux encore en cours restent marqués jusqu'à leur fin.
+      for (const id of this.ignoredJobs) {
+        if (!jobs[id]) this.ignoredJobs.delete(id);
+      }
 
       if (!Object.keys(jobs).length) this.stopPolling();
     };
@@ -261,6 +271,16 @@ export class MovieDownloader extends EventEmitter {
   stopPolling() {
     clearInterval(this.pollTimer);
     this.pollTimer = null;
+  }
+
+  /**
+   * Marque un job comme supprimé par l'utilisateur : quand il disparaîtra des
+   * jobs actifs, on n'annoncera pas « Film prêt ». Sûr même si la suppression
+   * (asynchrone) prend plusieurs cycles de polling — l'id reste ignoré tant que
+   * le job est encore listé.
+   */
+  ignoreJob(id) {
+    this.ignoredJobs.add(id);
   }
 }
 
