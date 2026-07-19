@@ -25,6 +25,7 @@ import { startWeather } from './modules/Weather.js';
 import { VolumeOverlay } from './modules/VolumeOverlay.js';
 import { WeatherPopup } from './modules/WeatherPopup.js';
 import { startRetroFx } from './modules/RetroFx.js';
+import { startRetroCursor } from './modules/RetroCursor.js';
 
 // Global app instance
 const app = {
@@ -87,6 +88,7 @@ async function bootstrap() {
     app.subtitleHud = new SubtitleHud().init();
     app.volumeOverlay = new VolumeOverlay().init();
     app.weatherPopup = new WeatherPopup().init();
+    startRetroCursor(); // curseur rétro : image pixel suivant la souris (natif masqué)
     startRetroClock(); // horloge/date des en-têtes rétro
     startWeather();    // icône météo (prévision +1h de Tours) à côté de la date
     // Clic sur l'horloge/icône d'un en-tête → popup de prévisions du jour.

@@ -12,6 +12,7 @@
 
 import { EventEmitter } from './EventEmitter.js';
 import { footerHtml, wireFooterNav } from './CrtFooter.js';
+import { reveal } from './RetroFx.js';
 
 // Modes de tri de la bibliothèque (cyclés par le bouton du pied de page).
 const SORTS = [
@@ -188,6 +189,7 @@ export class MovieBrowser extends EventEmitter {
 
   /** Sélectionne un film : surligne la ligne et remplit le volet détail. */
   select(id) {
+    const changed = id !== this.selectedId;
     this.selectedId = id;
     this._pendingDelete = false;
     for (const row of this.listEl.querySelectorAll('.mb-row')) {
@@ -195,6 +197,10 @@ export class MovieBrowser extends EventEmitter {
     }
     const entry = id ? this.library.get(id) : null;
     this.renderDetail(entry);
+    // Cascade rétro UNIQUEMENT sur un vrai changement de sélection. Les
+    // rafraîchissements de statut (/movies/status, chaque seconde) re-render le
+    // volet via renderDetail() sans passer par select() → pas d'animation.
+    if (changed && entry) reveal(this.detailEl, { selector: '.mb-detail > *' });
   }
 
   /** Remplit le volet détail (affiche, titre/année, progression, PLAY/DELETE). */

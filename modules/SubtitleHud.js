@@ -21,6 +21,7 @@ export class SubtitleHud extends EventEmitter {
     this.available = false; // le film courant a-t-il des sous-titres ?
     this.offset = 0;
     this.hideTimer = null;
+    this.hovering = false; // la souris est-elle au-dessus du panneau ?
   }
 
   init() {
@@ -43,6 +44,18 @@ export class SubtitleHud extends EventEmitter {
       this.wake(); // un réglage réarme le délai
     });
 
+    // Tant que la souris est SUR le panneau, il ne doit pas s'effacer sous le
+    // curseur (sinon on ne peut jamais viser un bouton tranquillement). On
+    // suspend l'extinction à l'entrée, on la relance à la sortie.
+    root.addEventListener('mouseenter', () => {
+      this.hovering = true;
+      clearTimeout(this.hideTimer);
+    });
+    root.addEventListener('mouseleave', () => {
+      this.hovering = false;
+      this.wake(); // repart pour un délai d'inactivité normal
+    });
+
     return this;
   }
 
@@ -63,6 +76,9 @@ export class SubtitleHud extends EventEmitter {
     if (!this.available) return;
     this.root.classList.add('open');
     clearTimeout(this.hideTimer);
+    // Si la souris est posée sur le panneau, on le laisse ouvert indéfiniment
+    // (l'extinction repartira au mouseleave). Sinon, délai d'inactivité normal.
+    if (this.hovering) return;
     this.hideTimer = setTimeout(() => this.hide(), IDLE_MS);
   }
 

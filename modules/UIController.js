@@ -28,25 +28,11 @@ export class UIController extends EventEmitter {
    * Initialize cursor auto-hide functionality
    */
   initCursorHandling() {
-    const showCursor = () => {
-      document.body.style.cursor = 'auto';
-      this.state.setCursorVisible(true);
-      clearTimeout(this.cursorHideTimeout);
-      this.cursorHideTimeout = setTimeout(() => this.hideCursor(), 3000);
-    };
-
-    const hideCursor = () => {
-      document.body.style.cursor = 'none';
-      this.state.setCursorVisible(false);
-    };
-
-    this.hideCursor = hideCursor;
-
-    document.addEventListener('mousemove', showCursor);
-    document.addEventListener('mousedown', showCursor);
-
-    // Hide cursor initially
-    showCursor();
+    // Le curseur est désormais géré par RetroCursor.js (image pixel qui suit la
+    // souris + masquage auto après inactivité). Le curseur NATIF reste masqué en
+    // permanence via `html { cursor: none }`. On ne touche donc plus à
+    // body.style.cursor ici : le mettre à 'auto' réafficherait le curseur système
+    // par-dessus l'image rétro (c'était le conflit). No-op volontaire.
   }
 
   /**

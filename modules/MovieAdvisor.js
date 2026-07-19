@@ -21,14 +21,24 @@
 import { EventEmitter } from './EventEmitter.js';
 import { footerHtml, wireFooterNav } from './CrtFooter.js';
 import { QUOTES } from './AdvisorQuotes.js';
+import { reveal } from './RetroFx.js';
 
-// Les 31 thèmes, partagés par référence entre Theme 1 et Theme 2.
+// Les thèmes, partagés par référence entre Theme 1 et Theme 2.
 const THEMES = [
   'Western', 'Space', 'Sci-Fi', 'Fantasy', 'Medieval', 'War', 'Crime', 'Detective',
   'Horror', 'Creatures', 'Monsters', 'Zombies', 'Vampires', 'Robots', 'AI', 'Cyberpunk',
   'Post-apocalyptic', 'Time Travel', 'Superheroes', 'Martial Arts', 'Pirates', 'Samurai',
   'Espionage', 'Nature', 'Survival', 'Ocean', 'Mountains', 'Desert', 'Jungle', 'Arctic',
   'Documentary',
+  // Genres & registres
+  'Heist', 'Gangster', 'Film Noir', 'Thriller', 'Slasher', 'Disaster', 'Musical',
+  'Sports', 'Boxing', 'Racing', 'Courtroom', 'Political', 'Biopic', 'Historical',
+  'Coming-of-Age', 'Road Trip', 'Prison', 'Con Artists', 'Revenge', 'Kidnapping',
+  // Univers & créatures
+  'Dystopia', 'Steampunk', 'Mythology', 'Dragons', 'Vikings', 'Gladiators', 'Knights',
+  'Wizards', 'Witches', 'Demons', 'Ghosts', 'Aliens', 'Kaiju', 'Mecha', 'Dinosaurs',
+  'Magic', 'Assassins', 'Ninjas', 'Hackers', 'Treasure Hunt', 'Cars', 'Music', 'Dance',
+  'Family', 'Christmas',
 ];
 
 /**
@@ -225,6 +235,8 @@ export class MovieAdvisor extends EventEmitter {
 
     this.pkGridEl.scrollTop = 0;
     this.root.classList.add('picking');
+    // Cascade rétro sur les options à l'ouverture du picker.
+    reveal(this.pkGridEl, { selector: '.adv-opt' });
   }
 
   _closePicker() {

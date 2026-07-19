@@ -61,20 +61,26 @@ function blip(type) {
 }
 
 /**
- * Joue la cascade d'apparition sur les éléments d'un écran.
+ * Joue la cascade d'apparition rétro sur un ensemble d'éléments.
  * `animation-fill-mode: both` garantit que chaque élément FINIT visible même si
  * son délai est long — pas de risque d'élément coincé à opacity 0.
+ *
+ * @param {Element} root  conteneur dans lequel chercher les éléments à animer.
+ * @param {object}  [opts]
+ * @param {string}  [opts.selector]  sélecteur des éléments (défaut : écran entier).
+ * @param {number}  [opts.max]       plafond d'éléments animés.
+ * @param {boolean} [opts.sound]     jouer les « ticks » (défaut : oui).
  */
-export function revealOverlay(root) {
+export function reveal(root, { selector = REVEAL_SELECTOR, max = MAX_ITEMS, sound = true } = {}) {
   if (!root) return;
-  const items = [...root.querySelectorAll(REVEAL_SELECTOR)]
+  const items = [...root.querySelectorAll(selector)]
     .filter((el) => el.offsetParent !== null) // visibles seulement
-    .slice(0, MAX_ITEMS);
+    .slice(0, max);
 
   items.forEach((el, i) => {
     const delay = i * STEP_MS;
     el.style.animation = 'none';
-    // Reflow pour pouvoir relancer l'animation à chaque ouverture.
+    // Reflow pour pouvoir relancer l'animation à chaque appel.
     void el.offsetWidth;
     // steps(1, start) : pas de fondu progressif — l'élément reste invisible
     // pendant son délai puis APPARAÎT d'un coup (effet chargement rétro net).
@@ -86,8 +92,13 @@ export function revealOverlay(root) {
     el.addEventListener('animationend', clear, { once: true });
     setTimeout(clear, delay + 500);
     // Un tick discret par élément (un sur deux pour ne pas saturer).
-    if (i % 2 === 0) setTimeout(() => blip('tick'), delay);
+    if (sound && i % 2 === 0) setTimeout(() => blip('tick'), delay);
   });
+}
+
+/** Cascade sur un écran entier (à son ouverture). */
+export function revealOverlay(root) {
+  reveal(root);
 }
 
 /**

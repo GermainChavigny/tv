@@ -42,6 +42,12 @@
   <!-- crossorigin: requis pour charger les pistes <track> servies par l'API (autre origine) -->
   <div id="movie-container">
     <video id="movie-player" crossorigin="anonymous"></video>
+    <!-- Calque transparent AU-DESSUS de la vidéo : un <video> est un élément
+         « remplacé » dont les événements souris sont capricieux sur l'appareil
+         (mouseout relatedTarget null, mousemove perdus au survol des bandes
+         letterbox en 16:9) → le curseur ET le HUD de sous-titres s'effaçaient
+         hors de l'image. Un simple <div> normalise la capture des mouvements. -->
+    <div id="movie-mouse-catch"></div>
   </div>
 
 </body>

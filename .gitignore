@@ -12,5 +12,7 @@ __pycache__/
 # Fichiers temporaires
 *.tmp
 .DS_Store
+# Logs runtime (api.py, etc.)
+*.log
 # Harness de capture dev-only
 _preview.html

@@ -1,11 +1,11 @@
 """
-Sources externes du volet films : secrets, indexeur de torrents (avec repli
-sur IP directe si le domaine tombe) et métadonnées TMDB.
+Sources externes du volet films : secrets, indexeur de torrents (Jackett via
+son API Torznab) et métadonnées TMDB.
 
-Tout ce qui est spécifique à un fournisseur (domaines, IP de secours, clés API)
-vit dans tv_data/secrets.json — JAMAIS dans le dépôt git. Le code ne contient
-que la *forme* des échanges, à la manière de Jackett/Radarr. L'usage licite du
-contenu relève de l'utilisateur.
+Tout ce qui est spécifique à un fournisseur (URL Jackett, clés API) vit dans
+tv_data/secrets.json — JAMAIS dans le dépôt git. Jackett agrège les trackers ;
+le code ne fait qu'interroger son API. L'usage licite du contenu relève de
+l'utilisateur.
 """
 
 import json
@@ -15,10 +15,10 @@ import shutil
 import struct
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import requests
-from requests.adapters import HTTPAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -43,37 +43,14 @@ SECRETS_TEMPLATE = {
     #    "apiKey": "", "model": "grok-3"},
     "advisorFallbacks": [],
     "indexers": [
-        # Deux types disponibles (à compléter par l'utilisateur) :
-        #
-        # 1) type "yts" — API au format YTS (/api/v2/list_movies.json) :
+        # Indexeur Torznab (Jackett). Jackett tourne en local (port 9117) et
+        # agrège tous les trackers ajoutés dans son tableau de bord.
         # {
-        #   "name": "mon-indexeur", "type": "yts",
-        #   "bases": [                       # essayés dans l'ordre, + repli DoH auto
-        #     {"host": "exemple.tld", "ip": null, "scheme": "https"},
-        #     {"host": "exemple.tld", "ip": "1.2.3.4", "scheme": "https"}
-        #   ]
-        # }
-        #
-        # 2) type "generic" — N'IMPORTE quelle API JSON, tu décris le mapping :
-        # {
-        #   "name": "mon-api", "type": "generic",
-        #   "bases": [{"host": "exemple.tld", "ip": null, "scheme": "https"}],
-        #   "path": "/api/search",           # endpoint de recherche
-        #   "queryParam": "q",               # nom du paramètre de requête
-        #   "extraParams": {"limit": 30},    # paramètres fixes éventuels
-        #   "map": {                         # chemins pointés dans la réponse JSON
-        #     "results": "data.items",       #   tableau des résultats ("" = racine)
-        #     "title":   "name",
-        #     "year":    "year",
-        #     "magnet":  "magnet",           #   lien magnet complet...
-        #     "hash":    "info_hash",        #   ...OU info-hash (magnet reconstruit)
-        #     "name":    "name",             #   nom pour le magnet reconstruit
-        #     "seeders": "seeders",
-        #     "size":    "size",
-        #     "quality": "quality",
-        #     "poster":  "poster",
-        #     "imdb":    "imdb_id"
-        #   }
+        #   "name": "Jackett", "type": "torznab",
+        #   "url": "http://127.0.0.1:9117",
+        #   "apiKey": "<clé API Jackett>",   # Dashboard Jackett → « API Key »
+        #   "indexer": "all",                # "all" = agrégat de tous les trackers
+        #   "filter": {"minSeeders": 1, "maxSizeGb": 6}
         # }
     ],
 }
@@ -106,107 +83,7 @@ def load_secrets(data_dir):
 
 
 # ---------------------------------------------------------------------------
-# Requêtes résilientes : domaine puis repli IP directe (Host + SNI conservés)
-# ---------------------------------------------------------------------------
-
-class _SNIAdapter(HTTPAdapter):
-    """
-    Adapte TLS pour présenter le bon nom de domaine (SNI) alors qu'on se
-    connecte à une IP directe. Sans ça, un CDN rejette la poignée de main.
-    """
-
-    def __init__(self, server_hostname, **kwargs):
-        self._server_hostname = server_hostname
-        super().__init__(**kwargs)
-
-    def init_poolmanager(self, *args, **kwargs):
-        kwargs["server_hostname"] = self._server_hostname
-        kwargs["assert_hostname"] = False
-        super().init_poolmanager(*args, **kwargs)
-
-
-def resolve_via_doh(host):
-    """
-    Résout `host` en IPv4 via DNS-over-HTTPS (Cloudflare puis Google), en
-    contournant un résolveur système empoisonné. Retourne une IP publique
-    exploitable ou None (NXDOMAIN, ou seulement des IP locales = sinkhole).
-    """
-    providers = [
-        "https://1.1.1.1/dns-query",
-        "https://dns.google/resolve",
-    ]
-    for provider in providers:
-        try:
-            r = requests.get(provider, params={"name": host, "type": "A"},
-                             headers={"accept": "application/dns-json"}, timeout=6)
-            answers = r.json().get("Answer", [])
-            for a in answers:
-                ip = a.get("data", "")
-                # type 1 = A ; on écarte localhost / IP privées (sinkhole)
-                if a.get("type") == 1 and not ip.startswith(("127.", "10.", "0.")):
-                    return ip
-        except (requests.RequestException, ValueError):
-            continue
-    return None
-
-
-def request_with_fallback(bases, path, params=None, timeout=8):
-    """
-    Tente une requête GET JSON sur chaque base jusqu'à succès, dans l'ordre :
-      1) le domaine (résolveur système) ;
-      2) l'IP de secours fournie dans la config, si présente ;
-      3) l'IP réelle résolue via DoH (auto-contournement d'un DNS empoisonné).
-    Les tentatives par IP conservent l'en-tête Host et le SNI = domaine.
-
-    Retourne (json, base_utilisée) ou lève la dernière exception.
-    """
-    last_err = None
-    for base in bases:
-        host = base["host"]
-        scheme = base.get("scheme", "https")
-
-        # (url, sni_host, verify) — sni_host non nul ⇒ connexion par IP
-        attempts = [(f"{scheme}://{host}{path}", None, True)]
-        if base.get("ip"):
-            attempts.append((f"{scheme}://{base['ip']}{path}", host, False))
-
-        for url, sni_host, verify in attempts:
-            try:
-                return _do_get(url, sni_host, verify, scheme, params, timeout), base
-            except (requests.RequestException, ValueError) as err:
-                last_err = err
-                continue
-
-        # Dernier recours : IP réelle via DoH (si pas déjà fournie)
-        if not base.get("ip"):
-            doh_ip = resolve_via_doh(host)
-            if doh_ip:
-                try:
-                    url = f"{scheme}://{doh_ip}{path}"
-                    return _do_get(url, host, False, scheme, params, timeout), base
-                except (requests.RequestException, ValueError) as err:
-                    last_err = err
-
-    if last_err:
-        raise last_err
-    raise RuntimeError("Aucun indexeur configuré")
-
-
-def _do_get(url, sni_host, verify, scheme, params, timeout):
-    """Effectue le GET JSON, en réglant Host + SNI si on tape une IP directe."""
-    session = requests.Session()
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-    if sni_host:
-        headers["Host"] = sni_host
-        session.mount(f"{scheme}://", _SNIAdapter(sni_host))
-        verify = False
-    resp = session.get(url, params=params, headers=headers, timeout=timeout, verify=verify)
-    resp.raise_for_status()
-    return resp.json()
-
-
-# ---------------------------------------------------------------------------
-# Indexeur de torrents (forme de réponse « yts » = shape JSON courante)
+# Indexeur de torrents (Jackett/Torznab)
 # ---------------------------------------------------------------------------
 
 # Trackers publics ajoutés aux magnets pour améliorer la résolution des pairs.
@@ -238,20 +115,9 @@ def build_magnet(info_hash, name=None, trackers=DEFAULT_TRACKERS):
     return magnet
 
 
-# Extensions vidéo acceptées (filtre videoOnly). Aligné sur movie_pipeline.
-VIDEO_EXTS = {'.mp4', '.mkv', '.avi', '.mov', '.m4v', '.webm', '.ts', '.wmv', '.flv', '.mpg', '.mpeg'}
-
-
 def _to_int(v, default=0):
     try:
         return int(v)
-    except (TypeError, ValueError):
-        return default
-
-
-def _to_num(v, default=0.0):
-    try:
-        return float(v)
     except (TypeError, ValueError):
         return default
 
@@ -268,29 +134,11 @@ def _human_size(num_bytes):
     return f"{size:.1f} Po"
 
 
-def _dig(obj, path):
-    """
-    Navigue un objet JSON via un chemin pointé ('a.b.c').
-    path='' -> l'objet lui-même (cas d'un tableau à la racine) ; path=None -> None.
-    Retourne None si le chemin n'existe pas.
-    """
-    if path is None:
-        return None
-    if path == "":
-        return obj
-    cur = obj
-    for key in path.split("."):
-        if isinstance(cur, dict) and key in cur:
-            cur = cur[key]
-        else:
-            return None
-    return cur
-
-
 class Indexer:
     """
-    Recherche de torrents de films sur un ou plusieurs indexeurs configurés,
-    avec repli sur IP directe. Résultats normalisés et agrégés par film.
+    Recherche de torrents de films via un indexeur Torznab (Jackett), qui agrège
+    lui-même tous les trackers configurés dans son tableau de bord. Résultats
+    normalisés et agrégés par film.
     """
 
     def __init__(self, indexers):
@@ -308,142 +156,97 @@ class Indexer:
         for cfg in self.indexers:
             try:
                 kind = cfg.get("type")
-                if kind == "yts":
-                    results.extend(self._search_yts(cfg, query, limit))
-                elif kind == "generic":
-                    results.extend(self._search_generic(cfg, query, limit))
+                if kind == "torznab":
+                    results.extend(self._search_torznab(cfg, query, limit))
                 else:
                     print(f"[Indexer] type inconnu : {kind}")
             except Exception as err:  # un indexeur HS ne casse pas la recherche
                 print(f"[Indexer] {cfg.get('name')} en échec : {err}")
         return results
 
-    def _search_generic(self, cfg, query, limit):
+    def _search_torznab(self, cfg, query, limit):
         """
-        Indexeur configurable : le mapping des champs de la réponse JSON est
-        entièrement décrit dans la config (secrets.json), donc aucune forme
-        d'API n'est codée en dur. Voir SECRETS_TEMPLATE pour les clés attendues.
+        Indexeur Torznab (Jackett / Prowlarr). Interroge l'agrégat de tous les
+        trackers configurés côté Jackett et normalise la réponse RSS/XML dans le
+        format attendu par l'app.
 
-        Filtrage/tri optionnels via cfg['filter'] et cfg['sort'] :
-          filter.minSeeders (défaut 1), filter.maxSizeGb (défaut aucun),
-          filter.videoOnly (défaut True, exige une extension vidéo),
-          sort = 'seeders' (défaut) | 'score' | 'health'.
+        Config (secrets.json) :
+          url      base Jackett, ex. "http://127.0.0.1:9117"
+          apiKey   clé API Jackett (onglet Dashboard → « API Key »)
+          indexer  id d'indexeur Jackett (défaut "all" = agrégat de tous)
+          filter   {minSeeders (déf. 1), maxSizeGb (déf. aucun)}
+          cat      catégories Torznab optionnelles (ex. "2000" pour Films)
 
-        Pagination optionnelle : cfg['pages'] (nombre de pages à agréger, défaut 1)
-        et cfg['pageParam'] (nom du paramètre de page, défaut 'page'). On s'arrête
-        tôt dès qu'une page revient vide.
+        Les indexeurs (trackers) eux-mêmes s'ajoutent dans le tableau de bord
+        Jackett (http://<box>:9117) — pas ici.
         """
-        m = cfg.get("map", {})
+        base = (cfg.get("url") or "http://127.0.0.1:9117").rstrip("/")
+        indexer = cfg.get("indexer", "all")
         flt = cfg.get("filter", {})
         min_seeders = flt.get("minSeeders", 1)
         max_bytes = flt.get("maxSizeGb", 0) * (1024 ** 3) if flt.get("maxSizeGb") else None
-        video_only = flt.get("videoOnly", True)
-        sort_key = cfg.get("sort", "seeders")
 
-        base_params = dict(cfg.get("extraParams", {}))
-        base_params[cfg.get("queryParam", "q")] = query
-        page_param = cfg.get("pageParam", "page")
-        pages = max(1, int(cfg.get("pages", 1)))
+        url = f"{base}/api/v2.0/indexers/{indexer}/results/torznab/api"
+        params = {"apikey": cfg.get("apiKey", ""), "t": "search", "q": query}
+        if cfg.get("cat"):
+            params["cat"] = cfg["cat"]
+        resp = requests.get(url, params=params, timeout=cfg.get("timeout", 15))
+        resp.raise_for_status()
+        root = ET.fromstring(resp.content)
 
-        items = []
-        for page in range(1, pages + 1):
-            params = dict(base_params)
-            if pages > 1 or page_param in base_params:
-                params[page_param] = page
-            data, _ = request_with_fallback(cfg["bases"], cfg.get("path", "/"), params=params)
-            page_items = _dig(data, m.get("results", ""))
-            if isinstance(page_items, dict):     # réponse "objet" -> valeurs
-                page_items = list(page_items.values())
-            if not isinstance(page_items, list) or not page_items:
-                break  # plus de résultats : inutile de demander les pages suivantes
-            items.extend(page_items)
-            if len(page_items) < 2:
-                break  # page manifestement incomplète : on arrête
-
-        # Filtres DURS (source injouable/inatteignable) vs. SOUPLE (taille).
-        # Le cap de taille est une préférence : s'il ne reste plus rien après
-        # l'avoir appliqué, on garde quand même les sources trop grosses (le
-        # transcodage les ramène en 720p). Évite les « aucun résultat » alors que
-        # des torrents valides existent — typique des vieux films dont les seules
-        # sources partagées sont de gros remux.
+        TZ = "{http://torznab.com/schemas/2015/feed}"
         strict, oversized = [], []
         seen = set()
-        for it in items:
-            magnet = _dig(it, m.get("magnet"))
-            if not magnet:
-                h = _dig(it, m.get("hash"))
-                if h:
-                    magnet = build_magnet(h, _dig(it, m.get("name")))
-            if not magnet:
-                continue  # rien de téléchargeable
+        for item in root.iter("item"):
+            title = (item.findtext("title") or "?").strip()
+            attrs = {a.get("name"): a.get("value") for a in item.findall(f"{TZ}attr")}
 
-            # Dédoublonnage inter-pages : une même source peut réapparaître.
+            # Magnet : magneturl en priorité, sinon <link>/<enclosure> s'ils sont
+            # des magnets, sinon reconstruit depuis l'infohash. Un simple lien
+            # .torrent HTTP est ignoré (le pipeline attend un magnet).
+            magnet = attrs.get("magneturl")
+            if not magnet and (item.findtext("link") or "").startswith("magnet:"):
+                magnet = item.findtext("link")
+            if not magnet:
+                enc = item.find("enclosure")
+                if enc is not None and (enc.get("url") or "").startswith("magnet:"):
+                    magnet = enc.get("url")
+            if not magnet and attrs.get("infohash"):
+                magnet = build_magnet(attrs["infohash"], title)
+            if not magnet:
+                continue
+
             key = _magnet_hash(magnet) or magnet
             if key in seen:
                 continue
             seen.add(key)
 
-            seeders = _to_int(_dig(it, m.get("seeders")))
+            seeders = _to_int(attrs.get("seeders"))
             if seeders < min_seeders:
-                continue  # source sans partageur = téléchargement voué à l'échec
+                continue
 
-            if video_only:
-                fname = _dig(it, m.get("file")) or ""
-                if fname and Path(fname).suffix.lower() not in VIDEO_EXTS:
-                    continue  # .iso, .flac, .mp3… : pas un film jouable
-
-            size_bytes = _to_int(_dig(it, m.get("sizeBytes")))
+            size_bytes = _to_int(item.findtext("size") or attrs.get("size"))
             too_big = bool(max_bytes and size_bytes and size_bytes > max_bytes)
 
-            score = _to_num(_dig(it, m.get("score")))
-            health = _to_num(_dig(it, m.get("health")))
-            sort_val = {"seeders": seeders, "score": score, "health": health}.get(sort_key, seeders)
-
             movie = {
-                "title": _dig(it, m.get("title")) or "?",
-                "year": _dig(it, m.get("year")),
-                "imdbId": _dig(it, m.get("imdb")),
-                "cover": _dig(it, m.get("poster")),
+                "title": title,
+                "year": None,
+                "imdbId": attrs.get("imdb") or attrs.get("imdbid"),
+                "cover": None,
                 "torrents": [{
-                    "quality": _dig(it, m.get("quality")),
+                    "quality": None,
                     "seeders": seeders,
-                    "size": _dig(it, m.get("size")) or _human_size(size_bytes),
+                    "size": _human_size(size_bytes),
                     "magnet": magnet,
                 }],
             }
-            (oversized if too_big else strict).append((sort_val, movie))
+            (oversized if too_big else strict).append((seeders, movie))
 
-        # On privilégie les sources sous le cap ; sinon on se rabat sur les grosses.
+        # On privilégie les sources sous le cap de taille, mais on garde les
+        # grosses s'il ne reste sinon plus rien (le transcodage les ramène en 720p).
         scored = strict or oversized
         scored.sort(key=lambda x: x[0], reverse=True)
         return [mv for _, mv in scored[:limit]]
-
-    def _search_yts(self, cfg, query, limit):
-        data, _ = request_with_fallback(
-            cfg["bases"], "/api/v2/list_movies.json",
-            params={"query_term": query, "limit": limit},
-        )
-        movies = (data.get("data") or {}).get("movies") or []
-        out = []
-        for m in movies:
-            torrents = []
-            for t in m.get("torrents", []):
-                torrents.append({
-                    "quality": t.get("quality"),
-                    "seeders": t.get("seeds", 0),
-                    "size": t.get("size"),
-                    "magnet": build_magnet(t["hash"], m.get("title_long")),
-                })
-            # meilleures sources en premier (plus de seeders)
-            torrents.sort(key=lambda x: x.get("seeders", 0), reverse=True)
-            out.append({
-                "title": m.get("title"),
-                "year": m.get("year"),
-                "imdbId": m.get("imdb_code"),
-                "cover": m.get("medium_cover_image") or m.get("large_cover_image"),
-                "torrents": torrents,
-            })
-        return out
 
 
 # ---------------------------------------------------------------------------
@@ -546,11 +349,6 @@ class Tmdb:
         except (requests.RequestException, OSError) as err:
             print(f"[TMDB] téléchargement affiche échoué : {err}")
             return False
-
-
-def normalize_title(title):
-    """Nettoie un titre pour comparaison/recherche."""
-    return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", title or "")).strip().lower()
 
 
 # Balises courantes de nom de torrent, coupées lors du nettoyage du titre.
