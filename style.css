@@ -494,16 +494,20 @@ body {
   border-right: 0.42vw solid var(--crt-border);
 }
 
-/* Barre d'onglets de saisons : passe à la ligne si nombreuses (toutes cliquables
-   à la souris, pas de défilement horizontal). */
+/* Barre d'onglets de saisons : UNE seule ligne, défilement horizontal (via les
+   touches haut/bas de la télécommande quand la barre est survolée — cf.
+   scrollHovered). Gagne de la hauteur pour la liste d'épisodes. */
 #series-popup .sp-seasons {
   flex: 0 0 auto;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.6vh 0.83vw;
+  flex-wrap: nowrap;
+  gap: 0 0.83vw;
+  overflow-x: auto;
+  overflow-y: hidden;
   padding: 1vh var(--crt-safe-x);
   border-bottom: 0.28vw solid var(--crt-divider);
 }
+#series-popup .sp-season { white-space: nowrap; }
 #series-popup .sp-season {
   --cur: hand;
   flex: 0 0 auto;
@@ -535,7 +539,8 @@ body {
   border-bottom: 0.14vw solid var(--crt-divider);
   font-size: 2.6vw;
 }
-#series-popup .sp-ep-state { flex: 0 0 2.5vw; text-align: center; font-weight: bold; }
+#series-popup .sp-ep-state { flex: 0 0 6vw; text-align: left; font-weight: bold; }
+#series-popup .sp-ep--downloading .sp-ep-state { color: var(--crt-f3); }
 #series-popup .sp-ep-num { flex: 0 0 8vw; color: var(--crt-dim); }
 #series-popup .sp-ep-title {
   flex: 1 1 auto;
@@ -544,8 +549,6 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-#series-popup .sp-ep-pct { flex: 0 0 auto; color: var(--crt-f3); font-size: 2.2vw; }
-#series-popup .sp-ep.is-active .sp-ep-pct { color: var(--crt-accent-ink); }
 #series-popup .sp-ep--ready .sp-ep-state { color: var(--crt-f1); }        /* ▶ vert */
 #series-popup .sp-ep--downloading { color: var(--crt-dim); }
 #series-popup .sp-ep--downloading .sp-ep-state { color: var(--crt-f3); }  /* … cyan */
@@ -596,9 +599,7 @@ body {
 #series-popup .sp-d-prog { margin-top: 0.4vh; }
 #series-popup .sp-d-prog .crt-bar { width: 100%; }
 #series-popup .sp-d-overview {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
+  flex: 0 0 auto;               /* hauteur naturelle → le volet .sp-detail défile */
   color: var(--crt-text);
   font-size: 2.15vw;
   margin-top: 0.6vh;

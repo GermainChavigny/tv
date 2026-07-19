@@ -157,14 +157,15 @@ export class SeriesPopup extends EventEmitter {
     }
     this.episodesEl.innerHTML = eps.map((e) => {
       const st = this._effState(e);
-      const pct = (st === 'downloading' && e.progress)
-        ? `<span class="sp-ep-pct">${Math.round(e.progress * 100)}%</span>` : '';
+      // En cours → on montre le % (même 0 %) à la place de l'icône « … ».
+      const stateCell = st === 'downloading'
+        ? `${Math.round((e.progress || 0) * 100)}%`
+        : (STATE[st] || {}).icon || '';
       return `
         <div class="sp-ep sp-ep--${st}" data-ep="${e.ep}">
-          <span class="sp-ep-state">${(STATE[st] || {}).icon || ''}</span>
+          <span class="sp-ep-state">${stateCell}</span>
           <span class="sp-ep-num">E${String(e.ep).padStart(2, '0')}</span>
           <span class="sp-ep-title">${escapeHtml(e.title || '')}</span>
-          ${pct}
         </div>`;
     }).join('');
     // Conserve la sélection si l'épisode existe encore, sinon prend le premier.

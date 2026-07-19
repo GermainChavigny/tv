@@ -168,11 +168,17 @@ function inMovieUI() {
  */
 function scrollHovered(dir) {
   let node = document.elementFromPoint(lastMouse.x, lastMouse.y);
-  const step = Math.round(window.innerHeight * 0.28) * dir;
+  const vStep = Math.round(window.innerHeight * 0.28) * dir;
+  const hStep = Math.round(window.innerWidth * 0.28) * dir;
   while (node && node !== document.body) {
-    const oy = getComputedStyle(node).overflowY;
-    if ((oy === 'auto' || oy === 'scroll') && node.scrollHeight > node.clientHeight + 1) {
-      node.scrollBy({ top: step, behavior: 'smooth' });
+    const cs = getComputedStyle(node);
+    // Vertical d'abord, puis horizontal (ex. barre de saisons de la popup séries).
+    if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && node.scrollHeight > node.clientHeight + 1) {
+      node.scrollBy({ top: vStep, behavior: 'smooth' });
+      return;
+    }
+    if ((cs.overflowX === 'auto' || cs.overflowX === 'scroll') && node.scrollWidth > node.clientWidth + 1) {
+      node.scrollBy({ left: hStep, behavior: 'smooth' });
       return;
     }
     node = node.parentElement;
