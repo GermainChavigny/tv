@@ -227,6 +227,19 @@ def delete_movie():
     for sub_name in (entry.get('subtitles') or {}).values():
         _safe_unlink(MOVIES_DIR, sub_name)
 
+    # Série : supprime aussi ses épisodes (fichiers + entrées) et ses jobs pack.
+    if entry.get('type') == 'series':
+        for child_id, child in list(library.all().items()):
+            if child.get('showId') != movie_id:
+                continue
+            if child.get('status') in ('queued', 'downloading', 'fetching-subs', 'transcoding'):
+                worker.cancel(child_id)
+            _safe_unlink(MOVIES_DIR, child.get('file'))
+            _safe_unlink(POSTERS_DIR, child.get('poster'))
+            for sub_name in (child.get('subtitles') or {}).values():
+                _safe_unlink(MOVIES_DIR, sub_name)
+            library.delete(child_id)
+
     library.delete(movie_id)
     return jsonify({"status": "deleted", "id": movie_id})
 
@@ -273,12 +286,13 @@ def advisor_recommend():
     body = request.json or {}
     criteria = body.get('criteria') or {}
     keywords = body.get('keywords') or ''
+    kind = 'series' if body.get('kind') == 'series' else 'movie'
 
     owned = [e.get('title') for e in library.all().values() if e.get('title')]
     excluded = sorted(set(blacklist.titles()) | set(owned))
 
     try:
-        recs = advisor.recommend(criteria, excluded, keywords)
+        recs = advisor.recommend(criteria, excluded, keywords, kind)
     except AdvisorError as err:
         # Le message vient de Google (quota, clé invalide…) : il est montrable
         # tel quel et évite de faire deviner la cause depuis l'écran.
@@ -291,16 +305,20 @@ def advisor_recommend():
     for rec in recs:
         title = rec.get('title')
         year = rec.get('year')
-        # Match TMDB en fr-FR (le titre de Gemini est français → bon film),
-        # puis titre anglais par id pour la recherche torrent (plus de résultats
-        # que le titre traduit). Repli sur original/affiché si indisponible.
-        meta = tmdb.search(title, year) if tmdb.available() else None
-        english = tmdb.english_title(meta['tmdbId']) if meta else None
+        # Match TMDB en fr-FR (titre de Gemini en français → bon film/série),
+        # puis titre anglais par id pour la recherche torrent. Endpoints TV si série.
+        if kind == 'series':
+            meta = tmdb.search_tv(title, year) if tmdb.available() else None
+            english = tmdb.english_tv_title(meta['tmdbId']) if meta else None
+        else:
+            meta = tmdb.search(title, year) if tmdb.available() else None
+            english = tmdb.english_title(meta['tmdbId']) if meta else None
         query = english or (meta or {}).get('originalTitle') or title
         out.append({
             "id": _slugify(title, year),
-            "title": title,   # affiché (français, de Gemini)
+            "title": title,   # affiché (français, de l'IA)
             "query": query,   # recherche torrent (anglais)
+            "kind": kind,
             "year": year,
             "posterUrl": (meta or {}).get('posterUrl'),
             "summary": clip_summary(rec.get('description')),

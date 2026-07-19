@@ -78,7 +78,9 @@ export class MovieLibrary extends EventEmitter {
    *   3) en erreur (en fin de liste)
    */
   items() {
-    const all = Object.values(this.entries).filter((e) => e.status);
+    // FILMS uniquement : on exclut les séries, épisodes et jobs pack (gérés à part).
+    const all = Object.values(this.entries)
+      .filter((e) => e.status && (!e.type || e.type === 'movie'));
 
     const rank = (e) => {
       if (this.isActive(e)) return 0;
@@ -96,6 +98,36 @@ export class MovieLibrary extends EventEmitter {
       }
       return (b.addedAt || 0) - (a.addedAt || 0); // sinon : le plus récent d'abord
     });
+  }
+
+  /** Séries du catalogue (type 'series'), les plus récemment ajoutées d'abord. */
+  series() {
+    return Object.values(this.entries)
+      .filter((e) => e.type === 'series')
+      .sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+  }
+
+  /** Épisodes (type 'episode') d'une série, groupés par saison et triés. */
+  episodesBySeason(showId) {
+    const by = {};
+    for (const e of Object.values(this.entries)) {
+      if (e.type === 'episode' && e.showId === showId) {
+        (by[e.season] = by[e.season] || []).push(e);
+      }
+    }
+    for (const s of Object.keys(by)) by[s].sort((a, b) => (a.episode || 0) - (b.episode || 0));
+    return by;
+  }
+
+  /** Nombre total d'épisodes annoncés par TMDB (hors specials). */
+  showTotalEpisodes(show) {
+    return (show.seasons || []).reduce((n, s) => n + (s.episodeCount || 0), 0);
+  }
+
+  /** Nombre d'épisodes réellement disponibles (prêts) d'une série. */
+  showOwnedCount(showId) {
+    return Object.values(this.entries)
+      .filter((e) => e.type === 'episode' && e.showId === showId && e.status === 'ready').length;
   }
 }
 

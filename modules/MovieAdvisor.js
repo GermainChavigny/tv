@@ -78,6 +78,7 @@ export class MovieAdvisor extends EventEmitter {
     this.view = 'criteria';
     this.values = defaultValues();
     this.keywords = ''; // champ libre ajouté au prompt (acteur, thème…)
+    this.kind = 'movie'; // 'movie' | 'series'
     this.recommendations = [];
 
     // --- État volatil. ---
@@ -102,6 +103,7 @@ export class MovieAdvisor extends EventEmitter {
           <div class="adv-name">Michael Harper</div>
           <div class="adv-role">Movie Advisor</div>
           <div class="adv-quote"></div>
+          <button class="crt-btn adv-kind" type="button"></button>
           <button class="crt-btn adv-keywords" type="button"></button>
         </div>
         <div class="adv-col">
@@ -138,6 +140,7 @@ export class MovieAdvisor extends EventEmitter {
     this.pkTitleEl = root.querySelector('.adv-pk-title');
     this.pkGridEl = root.querySelector('.adv-pk-grid');
     this.keywordsBtn = root.querySelector('.adv-keywords');
+    this.kindBtn = root.querySelector('.adv-kind');
 
     // L'affiche du critique peut manquer (fichier non fourni) → cadre vide.
     const photo = root.querySelector('.adv-photo');
@@ -150,6 +153,11 @@ export class MovieAdvisor extends EventEmitter {
     root.querySelector('.adv-go').addEventListener('click', () => this._run());
     // Champ libre : app.js ouvre le clavier virtuel et rappelle setKeywords().
     this.keywordsBtn.addEventListener('click', () => this.emit('edit-keywords'));
+    // Bascule Film/Série : change le type de recommandations demandées.
+    this.kindBtn.addEventListener('click', () => {
+      this.kind = this.kind === 'series' ? 'movie' : 'series';
+      this._renderKind();
+    });
 
     // Un critère → ouvre son picker.
     this.gridEl.addEventListener('click', (e) => {
@@ -173,6 +181,7 @@ export class MovieAdvisor extends EventEmitter {
 
     this._renderCriteria();
     this._renderKeywords();
+    this._renderKind();
     return this;
   }
 
@@ -189,11 +198,17 @@ export class MovieAdvisor extends EventEmitter {
     this._renderKeywords();
   }
 
+  /** Reflète le type demandé (film / série) sur son bouton. */
+  _renderKind() {
+    this.kindBtn.textContent = this.kind === 'series' ? '▸ Series' : '▸ Movies';
+  }
+
   open() {
     this._closePicker();
     this.quoteEl.textContent = `« ${pick(QUOTES)} »`;
     this._renderCriteria();
     this._renderKeywords();
+    this._renderKind();
     // Restaure la vue quittée (les recos sont conservées) ; s'il n'y a rien à
     // montrer — jamais lancé, ou dernier appel en erreur — repart des critères.
     this._setView(this.recommendations.length ? this.view : 'criteria');
@@ -279,7 +294,7 @@ export class MovieAdvisor extends EventEmitter {
 
     let recs;
     try {
-      recs = await this.apiClient.adviseMovies(this.values, this.keywords);
+      recs = await this.apiClient.adviseMovies(this.values, this.keywords, this.kind);
     } catch (err) {
       this.busy = false;
       // Le backend relaie le message de Google (quota, clé…) : le montrer plutôt
@@ -332,7 +347,7 @@ export class MovieAdvisor extends EventEmitter {
         img.src = movie.posterUrl; // src après le listener : un 404 en cache tire aussitôt
       }
       col.querySelector('.adv-rec-go').addEventListener('click', () =>
-        this.emit('search-movie', { query: movie.query || movie.title, movie }));
+        this.emit('search-movie', { query: movie.query || movie.title, kind: this.kind, movie }));
       col.querySelector('.adv-rec-no').addEventListener('click', () => this._forget(idx));
 
       this.recsEl.appendChild(col);

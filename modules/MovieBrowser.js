@@ -45,6 +45,8 @@ export class MovieBrowser extends EventEmitter {
     this._pendingDelete = false;
     this.sortIndex = 0;
     this.filterIndex = DEFAULT_FILTER;
+    this.tab = 'movies'; // onglet actif : 'movies' | 'series'
+    this._lastJobIds = '';
   }
 
   /** Construit la structure DOM une seule fois et l'attache au body. */
@@ -53,12 +55,15 @@ export class MovieBrowser extends EventEmitter {
     root.id = 'movie-browser';
     root.innerHTML = `
       <div class="crt-header">
-        <span class="crt-title">Movie Library</span>
+        <span class="crt-title">Library</span>
         <span class="crt-meta"></span>
         <span class="crt-clock-wrap"><span class="crt-clock"></span><span class="crt-weather"></span><span class="crt-date"></span></span>
       </div>
       <div class="mb-body">
-        <div class="mb-list"></div>
+        <div class="mb-left">
+          <div class="mb-tabs"></div>
+          <div class="mb-list"></div>
+        </div>
         <div class="mb-detail is-empty"></div>
       </div>
       <div class="mb-empty">No movies yet. Use « Search » to download one.</div>
@@ -72,10 +77,20 @@ export class MovieBrowser extends EventEmitter {
     this.root = root;
     this.listEl = root.querySelector('.mb-list');
     this.detailEl = root.querySelector('.mb-detail');
+    this.tabsEl = root.querySelector('.mb-tabs');
     this.metaEl = root.querySelector('.crt-meta');
     this.emptyMsg = root.querySelector('.mb-empty');
     this.sortBtn = root.querySelector('.mb-sort');
     this.filterBtn = root.querySelector('.mb-filter');
+
+    // Onglets Movies / Series (délégation).
+    this.tabsEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-tab]');
+      if (!btn || btn.dataset.tab === this.tab) return;
+      this.tab = btn.dataset.tab;
+      this.selectedId = null;
+      this.render();
+    });
 
     wireFooterNav(root, this);
     // Boutons de tri / filtre (droite) : cyclent les modes et re-rendent.
@@ -117,27 +132,55 @@ export class MovieBrowser extends EventEmitter {
     return this.isOpen ? this.close() : this.open();
   }
 
-  /** Rendu de la liste + volet détail à partir des films filtrés/triés. */
+  /** Barre d'onglets Movies/Series — affichée seulement si les DEUX existent. */
+  _renderTabs() {
+    const hasMovies = this.library.items().length > 0;
+    const hasSeries = this.library.series().length > 0;
+    if (!(hasMovies && hasSeries)) {
+      this.tabsEl.style.display = 'none';
+      this.tab = hasSeries && !hasMovies ? 'series' : 'movies';
+      return;
+    }
+    this.tabsEl.style.display = '';
+    const tab = (key, label) =>
+      `<button class="mb-tab${this.tab === key ? ' is-active' : ''}" data-tab="${key}" type="button">${label}</button>`;
+    this.tabsEl.innerHTML = tab('movies', 'Movies') + tab('series', 'Series');
+  }
+
+  /** Rendu de la liste + volet détail à partir des éléments filtrés/triés. */
   render() {
+    this._renderTabs();
     const items = this._visibleItems();
     this._updateFooterLabels();
     this.listEl.innerHTML = '';
-    this.metaEl.textContent = items.length
-      ? `${items.length} ${items.length > 1 ? 'movies' : 'movie'}` : '';
+    const noun = this.tab === 'series' ? 'series' : (items.length > 1 ? 'movies' : 'movie');
+    this.metaEl.textContent = items.length ? `${items.length} ${noun}` : '';
     this.emptyMsg.style.display = items.length ? 'none' : 'block';
 
     for (const entry of items) {
       this.listEl.appendChild(this.renderRow(entry));
     }
 
-    // Conserve la sélection si toujours présente, sinon prend le premier film.
+    // Conserve la sélection si toujours présente, sinon prend le premier élément.
     const stillThere = items.some((e) => e.id === this.selectedId);
     const target = stillThere ? this.selectedId : (items[0] ? items[0].id : null);
     this.select(target);
   }
 
-  /** Films après filtre (vu/pas-vu) puis tri courant. */
+  /** Éléments visibles selon l'onglet, après filtre (vu/pas-vu) puis tri. */
   _visibleItems() {
+    // Onglet Series : liste des séries, le filtre vu/pas-vu ne s'applique pas.
+    if (this.tab === 'series') {
+      const series = this.library.series();
+      const mode = SORTS[this.sortIndex].key;
+      if (mode === 'title') {
+        return series.slice().sort((a, b) =>
+          (a.title || a.id).localeCompare(b.title || b.id, 'en', { sensitivity: 'base' }));
+      }
+      if (mode === 'year') return series.slice().sort((a, b) => (b.year || 0) - (a.year || 0));
+      return series; // default/recent : déjà par ajout décroissant
+    }
+
     let items = this.library.items(); // ordre par défaut (rang en cours/vus)
 
     // Filtre vu / pas-vu / tous (basé sur le % de complétion).
@@ -165,6 +208,7 @@ export class MovieBrowser extends EventEmitter {
 
   /** Une ligne : caret · titre · barre de progression (film prêt) ou état (en cours). */
   renderRow(entry) {
+    if (entry.type === 'series') return this.renderSeriesRow(entry);
     const ready = this.library.isReady(entry);
     const busy = this.library.isActive(entry);
     const errored = entry.status === 'error';
@@ -183,6 +227,21 @@ export class MovieBrowser extends EventEmitter {
       ${lastCell}
     `;
 
+    row.addEventListener('click', () => this.select(entry.id));
+    return row;
+  }
+
+  /** Ligne série : titre + compteur d'épisodes obtenus / total. */
+  renderSeriesRow(entry) {
+    const owned = this.library.showOwnedCount(entry.id);
+    const total = this.library.showTotalEpisodes(entry);
+    const row = document.createElement('div');
+    row.className = 'mb-row mb-row-series';
+    row.dataset.movieId = entry.id;
+    row.innerHTML = `
+      <span class="mb-row-main"><span class="mb-caret">&gt;</span><span class="mb-row-title">${escapeHtml(entry.title || entry.id)}</span></span>
+      <span class="mb-row-status mb-row-count">${owned}/${total} ep.</span>
+    `;
     row.addEventListener('click', () => this.select(entry.id));
     return row;
   }
@@ -215,6 +274,7 @@ export class MovieBrowser extends EventEmitter {
       return;
     }
     this.detailEl.classList.remove('is-empty');
+    if (entry.type === 'series') return this.renderSeriesDetail(entry);
 
     const ready = this.library.isReady(entry);
     const ratio = ready ? this.library.progressRatio(entry) : statusInfo(entry).ratio;
@@ -248,6 +308,36 @@ export class MovieBrowser extends EventEmitter {
     delBtn.addEventListener('click', () => this._onDelete(delBtn, entry));
   }
 
+  /** Volet détail d'une série : affiche, compteur, [Episodes] + [Delete]. */
+  renderSeriesDetail(entry) {
+    const owned = this.library.showOwnedCount(entry.id);
+    const total = this.library.showTotalEpisodes(entry);
+    const airing = entry.tmdbStatus === 'Returning Series' || entry.tmdbStatus === 'In Production';
+
+    this.detailEl.innerHTML = `
+      <div class="mb-poster"><img draggable="false" alt="" /></div>
+      <div class="mb-d-title">${escapeHtml(entry.title || entry.id)}</div>
+      ${entry.year ? `<div class="mb-d-year">${escapeHtml(String(entry.year))}${airing ? ' · ongoing' : ''}</div>` : ''}
+      <div class="mb-d-prog">${owned}/${total} episodes
+        ${barHtml(total ? owned / total : 0)}
+      </div>
+      <div class="mb-d-actions">
+        <button class="crt-btn mb-episodes" type="button">Episodes</button>
+        <button class="crt-btn mb-delete" type="button">Delete</button>
+      </div>
+      ${entry.overview ? `<div class="mb-d-overview">${escapeHtml(entry.overview)}</div>` : ''}
+    `;
+    const posterBox = this.detailEl.querySelector('.mb-poster');
+    const img = posterBox.querySelector('img');
+    img.addEventListener('error', () => posterBox.classList.add('no-poster'));
+    img.src = this.posterUrl(entry);
+
+    this.detailEl.querySelector('.mb-episodes')
+      .addEventListener('click', () => this.emit('open-series', entry));
+    const delBtn = this.detailEl.querySelector('.mb-delete');
+    delBtn.addEventListener('click', () => this._onDelete(delBtn, entry));
+  }
+
   /** Suppression à double confirmation (kiosque : pas de window.confirm). */
   _onDelete(btn, entry) {
     if (!this._pendingDelete) {
@@ -266,17 +356,17 @@ export class MovieBrowser extends EventEmitter {
    * apparaître/retirer les bonnes lignes.
    */
   syncActive(jobs) {
-    const jobIds = Object.keys(jobs);
-    const shown = new Set(
-      [...this.listEl.querySelectorAll('.mb-row.is-busy')].map((r) => r.dataset.movieId)
-    );
-    const membershipChanged =
-      jobIds.length !== shown.size || jobIds.some((id) => !shown.has(id));
-    if (membershipChanged) {
-      this.open(); // recharge le catalogue + re-render
+    // Recharge complète UNIQUEMENT quand l'ensemble des jobs change (début/fin) —
+    // pas à chaque tick. Couvre aussi les jobs série (pack/épisode) dont la fin
+    // met à jour les compteurs de l'onglet Series.
+    const ids = Object.keys(jobs).sort().join(',');
+    if (ids !== this._lastJobIds) {
+      this._lastJobIds = ids;
+      if (this.isOpen) this.open(); // recharge le catalogue + re-render
       return;
     }
-    for (const id of jobIds) {
+    // Sinon : progression en place des lignes films en cours.
+    for (const id of Object.keys(jobs)) {
       const row = this.listEl.querySelector(`.mb-row[data-movie-id="${id}"]`);
       if (row) this._applyRowStatus(row, { ...jobs[id], id });
     }

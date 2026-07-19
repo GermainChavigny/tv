@@ -16,7 +16,7 @@ export function footerHtml(actionsHtml = '') {
   return `
     <div class="crt-footer">
       <span class="crt-shortcuts">
-        <button class="crt-navbtn" data-nav="library" type="button"><span class="nav-sq nav-movies">■</span> Movies</button>
+        <button class="crt-navbtn" data-nav="library" type="button"><span class="nav-sq nav-movies">■</span> Library</button>
         <button class="crt-navbtn" data-nav="search" type="button"><span class="nav-sq nav-search">■</span> Search</button>
         <button class="crt-navbtn" data-nav="advisor" type="button"><span class="nav-sq nav-advisor">■</span> Advisor</button>
       </span>

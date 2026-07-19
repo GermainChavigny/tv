@@ -19,6 +19,7 @@ import { MovieControls } from './modules/MovieControls.js';
 import { VirtualKeyboard } from './modules/VirtualKeyboard.js';
 import { MovieDownloader } from './modules/MovieDownloader.js';
 import { MovieAdvisor } from './modules/MovieAdvisor.js';
+import { SeriesPopup } from './modules/SeriesPopup.js';
 import { SubtitleHud } from './modules/SubtitleHud.js';
 import { startRetroClock } from './modules/RetroClock.js';
 import { startWeather } from './modules/Weather.js';
@@ -44,6 +45,7 @@ const app = {
   virtualKeyboard: null,
   movieDownloader: null,
   movieAdvisor: null,
+  seriesPopup: null,
   subtitleHud: null,
   volumeOverlay: null,
   weatherPopup: null,
@@ -85,6 +87,7 @@ async function bootstrap() {
     app.virtualKeyboard = new VirtualKeyboard().init();
     app.movieDownloader = new MovieDownloader(apiClient, voiceAnnouncer).init();
     app.movieAdvisor = new MovieAdvisor(apiClient).init();
+    app.seriesPopup = new SeriesPopup(apiClient).init();
     app.subtitleHud = new SubtitleHud().init();
     app.volumeOverlay = new VolumeOverlay().init();
     app.weatherPopup = new WeatherPopup().init();
@@ -99,7 +102,7 @@ async function bootstrap() {
     // Effet de chargement rétro + sons, branché sur les 5 overlays films.
     startRetroFx([
       app.movieBrowser.root, app.movieDownloader.root, app.movieAdvisor.root,
-      app.virtualKeyboard.root, app.movieControls.root,
+      app.virtualKeyboard.root, app.movieControls.root, app.seriesPopup.root,
     ]);
     attachMovieHandlers();
 
@@ -150,7 +153,8 @@ function anyMovieOverlayOpen() {
     || (app.virtualKeyboard && app.virtualKeyboard.isOpen)
     || (app.movieControls && app.movieControls.isOpen)
     || (app.movieDownloader && app.movieDownloader.isOpen)
-    || (app.movieAdvisor && app.movieAdvisor.isOpen);
+    || (app.movieAdvisor && app.movieAdvisor.isOpen)
+    || (app.seriesPopup && app.seriesPopup.isOpen);
 }
 
 /** Vrai quand on est « sur la chaîne Movies » (film joué ou un overlay ouvert). */
@@ -398,6 +402,7 @@ function attachMovieHandlers() {
   // Raccourcis de pied de page [MOVIES] / [SEARCH] / [ADVISOR], communs à tous
   // les écrans films.
   const advisor = app.movieAdvisor;
+  const seriesPopup = app.seriesPopup;
   const goLibrary = () => {
     if (state.isMovieMode) pm.stopMovie();
     controls.hide();
@@ -405,6 +410,7 @@ function attachMovieHandlers() {
     keyboard.close();
     downloader.close();
     advisor.close();
+    seriesPopup.close();
     browser.open();
   };
   const goSearch = () => {
@@ -412,6 +418,7 @@ function attachMovieHandlers() {
     hud.hide();
     downloader.close();
     advisor.close();
+    seriesPopup.close();
     keyboard.open();
   };
   const goAdvisor = () => {
@@ -420,19 +427,51 @@ function attachMovieHandlers() {
     hud.hide();
     keyboard.close();
     downloader.close();
+    seriesPopup.close();
     browser.close();
     advisor.open(); // restaure critères + recos (état jamais réinitialisé)
   };
-  for (const mod of [browser, keyboard, downloader, controls, advisor]) {
+  for (const mod of [browser, keyboard, downloader, controls, advisor, seriesPopup]) {
     mod.on('nav-library', goLibrary);
     mod.on('nav-search', goSearch);
     mod.on('nav-advisor', goAdvisor);
   }
 
+  // Volet d'info d'une série → popup saisons/épisodes (par-dessus la bibliothèque).
+  browser.on('open-series', (show) => seriesPopup.open(show));
+
+  // Choix d'une série dans la recherche → l'enregistrer puis ouvrir la popup.
+  downloader.on('add-series', async (movie) => {
+    try {
+      const res = await apiClient.addSeries(movie.tmdbId);
+      downloader.close();
+      if (res && res.show) seriesPopup.open(res.show);
+    } catch (err) {
+      console.warn('addSeries failed:', err);
+    }
+  });
+
+  // Lecture d'un épisode depuis la popup : file = épisodes prêts de la série.
+  seriesPopup.on('play-episode', async ({ showId, season, episode }) => {
+    await app.movieLibrary.load(); // état frais (un épisode vient peut-être de finir)
+    const pad = (n) => String(n).padStart(2, '0');
+    const epId = `${showId}-s${pad(season)}e${pad(episode)}`;
+    const entry = app.movieLibrary.get(epId);
+    if (!entry || entry.status !== 'ready') return;
+    const queue = Object.values(app.movieLibrary.entries)
+      .filter((e) => e.type === 'episode' && e.showId === showId && e.status === 'ready')
+      .sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
+    const index = queue.findIndex((e) => e.id === epId);
+    seriesPopup.close();
+    browser.close();
+    controls.hide();
+    pm.playLibraryItem(entry, queue, index);
+  });
+
   // SEARCH sur une reco → l'écran de recherche torrent existant (titre seul).
-  advisor.on('search-movie', ({ query }) => {
+  advisor.on('search-movie', ({ query, kind }) => {
     advisor.close();
-    downloader.search(query);
+    downloader.search(query, kind === 'series' ? 'series' : 'movie');
   });
 
   // Le clavier sert deux écrans : le purpose (posé à open()) dit où renvoyer.

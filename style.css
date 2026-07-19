@@ -229,6 +229,7 @@ body {
 #movie-browser,
 #movie-search,
 #movie-advisor,
+#series-popup,
 #virtual-keyboard,
 #movie-controls,
 #subtitle-hud,
@@ -258,27 +259,31 @@ body {
 /* Scrollbars rétro : grosses barres, aplaties (pas d'arrondi), aux couleurs du thème. */
 #movie-browser ::-webkit-scrollbar,
 #movie-search ::-webkit-scrollbar,
-#movie-advisor ::-webkit-scrollbar {
+#movie-advisor ::-webkit-scrollbar,
+#series-popup ::-webkit-scrollbar {
   width: 2vw;
 }
 
 #movie-browser ::-webkit-scrollbar-track,
 #movie-search ::-webkit-scrollbar-track,
-#movie-advisor ::-webkit-scrollbar-track {
+#movie-advisor ::-webkit-scrollbar-track,
+#series-popup ::-webkit-scrollbar-track {
   background: var(--crt-panel-2);
   /*border-left: 0.28vw solid var(--crt-border);*/
 }
 
 #movie-browser ::-webkit-scrollbar-thumb,
 #movie-search ::-webkit-scrollbar-thumb,
-#movie-advisor ::-webkit-scrollbar-thumb {
+#movie-advisor ::-webkit-scrollbar-thumb,
+#series-popup ::-webkit-scrollbar-thumb {
   background: var(--crt-dim);
   border: 0.28vw solid var(--crt-bg);
 }
 
 #movie-browser ::-webkit-scrollbar-thumb:hover,
 #movie-search ::-webkit-scrollbar-thumb:hover,
-#movie-advisor ::-webkit-scrollbar-thumb:hover {
+#movie-advisor ::-webkit-scrollbar-thumb:hover,
+#series-popup ::-webkit-scrollbar-thumb:hover {
   background: var(--crt-accent);
 }
 
@@ -460,20 +465,141 @@ body {
 
 #movie-browser.open { display: flex; }
 
+/* ============ POPUP SÉRIES (saisons / épisodes) ============ */
+#series-popup {
+  position: absolute;
+  z-index: 40; /* au-dessus de la bibliothèque (20) d'où elle s'ouvre */
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  background: linear-gradient(359deg, #000219, #000f76);
+  overflow: hidden;
+}
+#series-popup.open { display: flex; }
+
+#series-popup .sp-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Barre d'onglets de saisons (défile horizontalement si nombreuses). */
+#series-popup .sp-seasons {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0 0.83vw;
+  overflow-x: auto;
+  padding: 1vh var(--crt-safe-x);
+  border-bottom: 0.28vw solid var(--crt-divider);
+}
+#series-popup .sp-season {
+  --cur: hand;
+  flex: 0 0 auto;
+  background: var(--crt-panel);
+  border: 0.28vw solid transparent;
+  color: var(--crt-text);
+  font-family: var(--crt-mono);
+  font-size: 2.5vw;
+  padding: 0.7vh 1.4vw;
+  text-shadow: var(--crt-shadow);
+}
+#series-popup .sp-season.is-active {
+  border-color: var(--crt-accent);
+  color: var(--crt-accent);
+}
+
+/* Liste des épisodes. */
+#series-popup .sp-episodes {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0.5vh var(--crt-safe-x);
+}
+#series-popup .sp-ep {
+  --cur: hand;
+  display: flex;
+  align-items: baseline;
+  gap: 0 1.11vw;
+  padding: 1vh 0.5vw;
+  border-bottom: 0.14vw solid var(--crt-divider);
+  font-size: 2.6vw;
+}
+#series-popup .sp-ep-state { flex: 0 0 2.5vw; text-align: center; font-weight: bold; }
+#series-popup .sp-ep-num { flex: 0 0 8vw; color: var(--crt-dim); }
+#series-popup .sp-ep-title {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#series-popup .sp-ep--ready .sp-ep-state { color: var(--crt-f1); }        /* ▶ vert */
+#series-popup .sp-ep--downloading { color: var(--crt-dim); }
+#series-popup .sp-ep--downloading .sp-ep-state { color: var(--crt-f3); }  /* … cyan */
+#series-popup .sp-ep--missing { --cur: hand; }
+#series-popup .sp-ep--missing .sp-ep-state { color: var(--crt-accent); }  /* + ambre */
+#series-popup .sp-ep--missing .sp-ep-title { color: var(--crt-dim); }
+#series-popup .sp-ep--error .sp-ep-state { color: #e07a7a; }
+#series-popup .sp-msg { padding: 3vh var(--crt-safe-x); color: var(--crt-dim); font-size: 2.5vw; }
+
+/* Actions du bas (télécharger saison / série). */
+#series-popup .sp-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0 1.67vw;
+  padding: 1.2vh var(--crt-safe-x);
+  border-top: 0.28vw solid var(--crt-divider);
+}
+#series-popup .sp-actions .crt-btn { flex: 1 1 0; text-align: center; }
+
 #movie-browser .mb-body {
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
 }
 
-/* Colonne liste (gauche) — plus large que le détail.
-   Bord gauche = bord de l'écran → padding en marge sûre de ce côté. */
-#movie-browser .mb-list {
+/* Colonne gauche = onglets (Movies/Series) + liste défilante. Plus large que
+   le détail ; le bord droit sépare de la colonne détail. */
+#movie-browser .mb-left {
   flex: 1 1 66%;
-  overflow-y: auto;
-  padding: 1.04vh 1.11vw 1.04vh var(--crt-safe-x);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   border-right: 0.42vw solid var(--crt-border);
 }
+
+/* Onglets Movies / Series (masqués si une seule catégorie existe). */
+#movie-browser .mb-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0 0.83vw;
+  padding: 0.7vh var(--crt-safe-x) 0;
+}
+#movie-browser .mb-tab {
+  --cur: hand;
+  background: none;
+  border: 0;
+  border-bottom: 0.42vw solid transparent;
+  color: var(--crt-dim);
+  font-family: var(--crt-mono);
+  font-size: 2.65vw;
+  text-transform: uppercase;
+  padding: 0.5vh 1.11vw;
+  text-shadow: var(--crt-shadow);
+}
+#movie-browser .mb-tab.is-active {
+  color: var(--crt-accent);
+  border-bottom-color: var(--crt-accent);
+}
+
+/* Bord gauche = bord de l'écran → padding en marge sûre de ce côté. */
+#movie-browser .mb-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 1.04vh 1.11vw 1.04vh var(--crt-safe-x);
+}
+
+/* Compteur d'épisodes d'une ligne série (obtenus / total). */
+#movie-browser .mb-row-count { color: var(--crt-f3); }
 
 /* Ligne : caret · titre (1fr) · barre segmentée (à droite, même ligne). */
 #movie-browser .mb-row {

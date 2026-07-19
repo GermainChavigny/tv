@@ -128,10 +128,10 @@ export class ApiClient {
    * @param {string} [keywords]  free-text added to the prompt (actor, theme…)
    * @returns {Promise<Array<{id,title,year,posterUrl,summary}>>}
    */
-  async adviseMovies(criteria, keywords = '') {
+  async adviseMovies(criteria, keywords = '', kind = 'movie') {
     return this.request(this.endpoints.advisorRecommend, {
       method: 'POST',
-      body: JSON.stringify({ criteria, keywords }),
+      body: JSON.stringify({ criteria, keywords, kind }),
     });
   }
 
@@ -151,6 +151,40 @@ export class ApiClient {
    */
   async getWeather() {
     return this.request(this.endpoints.weather);
+  }
+
+  // ----- Séries -----
+
+  /** Recherche de séries via TMDB TV. */
+  async searchSeries(query) {
+    return this.request(this.endpoints.seriesSearch, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+  }
+
+  /** Enregistre une série au catalogue (par id TMDB). */
+  async addSeries(tmdbId) {
+    return this.request(this.endpoints.seriesAdd, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tmdbId }),
+    });
+  }
+
+  /** Épisodes d'une saison + état local (missing/downloading/ready/error). */
+  async getSeriesSeason(showId, season) {
+    return this.request(`${this.endpoints.series}/${encodeURIComponent(showId)}/season/${season}`);
+  }
+
+  /** Lance un téléchargement série. payload : {showId, scope, season?, episode?}. */
+  async downloadSeries(payload) {
+    return this.request(this.endpoints.seriesDownload, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
   }
 
   /**
