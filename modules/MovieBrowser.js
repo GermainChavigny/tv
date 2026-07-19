@@ -308,11 +308,17 @@ export class MovieBrowser extends EventEmitter {
     delBtn.addEventListener('click', () => this._onDelete(delBtn, entry));
   }
 
-  /** Volet détail d'une série : affiche, compteur, [Episodes] + [Delete]. */
+  /** Volet détail d'une série : affiche, compteur, [Resume]/[Episodes]/[Delete]. */
   renderSeriesDetail(entry) {
     const owned = this.library.showOwnedCount(entry.id);
     const total = this.library.showTotalEpisodes(entry);
     const airing = entry.tmdbStatus === 'Returning Series' || entry.tmdbStatus === 'In Production';
+    // Reprise : dernier épisode lancé (reprend à son currentTime).
+    const last = this.library.lastPlayedEpisode(entry.id);
+    const pad = (n) => String(n).padStart(2, '0');
+    const resumeBtn = last
+      ? `<button class="crt-btn mb-resume" type="button">▶ Resume S${pad(last.season)}E${pad(last.episode)}</button>`
+      : '';
 
     this.detailEl.innerHTML = `
       <div class="mb-poster"><img draggable="false" alt="" /></div>
@@ -322,6 +328,7 @@ export class MovieBrowser extends EventEmitter {
         ${barHtml(total ? owned / total : 0)}
       </div>
       <div class="mb-d-actions">
+        ${resumeBtn}
         <button class="crt-btn mb-episodes" type="button">Episodes</button>
         <button class="crt-btn mb-delete" type="button">Delete</button>
       </div>
@@ -332,6 +339,10 @@ export class MovieBrowser extends EventEmitter {
     img.addEventListener('error', () => posterBox.classList.add('no-poster'));
     img.src = this.posterUrl(entry);
 
+    if (last) {
+      this.detailEl.querySelector('.mb-resume').addEventListener('click', () =>
+        this.emit('play-episode', { showId: entry.id, season: last.season, episode: last.episode }));
+    }
     this.detailEl.querySelector('.mb-episodes')
       .addEventListener('click', () => this.emit('open-series', entry));
     const delBtn = this.detailEl.querySelector('.mb-delete');

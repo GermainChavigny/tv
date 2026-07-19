@@ -457,8 +457,9 @@ function attachMovieHandlers() {
     }
   });
 
-  // Lecture d'un épisode depuis la popup : file = épisodes prêts de la série.
-  seriesPopup.on('play-episode', async ({ showId, season, episode }) => {
+  // Lecture d'un épisode (depuis la popup OU le bouton « Resume » du volet série).
+  // File de lecture = épisodes prêts de la série (next/previous enchaîne).
+  const playEpisode = async ({ showId, season, episode }) => {
     await app.movieLibrary.load(); // état frais (un épisode vient peut-être de finir)
     const pad = (n) => String(n).padStart(2, '0');
     const epId = `${showId}-s${pad(season)}e${pad(episode)}`;
@@ -472,7 +473,9 @@ function attachMovieHandlers() {
     browser.close();
     controls.hide();
     pm.playLibraryItem(entry, queue, index);
-  });
+  };
+  seriesPopup.on('play-episode', playEpisode);
+  browser.on('play-episode', playEpisode);
 
   // SEARCH sur une reco → l'écran de recherche torrent existant (titre seul).
   advisor.on('search-movie', ({ query, kind }) => {

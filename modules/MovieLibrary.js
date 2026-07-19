@@ -129,6 +129,19 @@ export class MovieLibrary extends EventEmitter {
     return Object.values(this.entries)
       .filter((e) => e.type === 'episode' && e.showId === showId && e.status === 'ready').length;
   }
+
+  /** Dernier épisode LANCÉ d'une série (le plus récent lastPlayedAt), ou null. */
+  lastPlayedEpisode(showId) {
+    let best = null;
+    for (const e of Object.values(this.entries)) {
+      if (e.type === 'episode' && e.showId === showId && e.status === 'ready'
+          && (e.lastPlayedAt || 0) > 0
+          && (!best || e.lastPlayedAt > best.lastPlayedAt)) {
+        best = e;
+      }
+    }
+    return best;
+  }
 }
 
 export default MovieLibrary;

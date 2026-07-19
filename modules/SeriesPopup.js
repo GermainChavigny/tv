@@ -161,8 +161,10 @@ export class SeriesPopup extends EventEmitter {
       const stateCell = st === 'downloading'
         ? `${Math.round((e.progress || 0) * 100)}%`
         : (STATE[st] || {}).icon || '';
+      // Couleur du % : cyan en téléchargement, vert en conversion (comme les films).
+      const conv = st === 'downloading' && e.phase === 'transcoding' ? ' sp-ep--converting' : '';
       return `
-        <div class="sp-ep sp-ep--${st}" data-ep="${e.ep}">
+        <div class="sp-ep sp-ep--${st}${conv}" data-ep="${e.ep}">
           <span class="sp-ep-state">${stateCell}</span>
           <span class="sp-ep-num">E${String(e.ep).padStart(2, '0')}</span>
           <span class="sp-ep-title">${escapeHtml(e.title || '')}</span>

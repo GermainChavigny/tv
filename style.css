@@ -540,7 +540,9 @@ body {
   font-size: 2.6vw;
 }
 #series-popup .sp-ep-state { flex: 0 0 6vw; text-align: left; font-weight: bold; }
-#series-popup .sp-ep--downloading .sp-ep-state { color: var(--crt-f3); }
+#series-popup .sp-ep--downloading .sp-ep-state { color: var(--crt-f3); }  /* téléchargement : cyan */
+#series-popup .sp-ep--converting .sp-ep-state { color: var(--crt-f1); }   /* conversion : vert */
+#series-popup .sp-ep.is-active .sp-ep-state { color: var(--crt-accent-ink); }
 #series-popup .sp-ep-num { flex: 0 0 8vw; color: var(--crt-dim); }
 #series-popup .sp-ep-title {
   flex: 1 1 auto;
