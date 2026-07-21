@@ -20,6 +20,10 @@ import time
 # Catégories Torznab TV (5000 = TV et ses sous-catégories).
 CAT_TV = "5000,5010,5020,5030,5040,5045,5050,5060,5070,5080"
 
+# Au-delà de cette fraction lue, un épisode est considéré « vu ».
+# Même seuil que MovieLibrary.WATCHED_THRESHOLD côté front.
+WATCHED_THRESHOLD = 0.92
+
 
 class SeriesManager:
     def __init__(self, library, tmdb, indexer, worker, slugify, posters_dir):
@@ -216,7 +220,15 @@ class SeriesManager:
                 continue
             entry = lib.get(self._episode_id(show_id, season, ep))
             state, progress, phase = 'missing', 0.0, None
+            current, duration, watched = 0.0, 0.0, False
             if entry:
+                # Avancement de LECTURE (distinct de `progress`, qui suit
+                # l'acquisition) : alimente la pastille « vu » et la barre de
+                # visionnage du volet d'info.
+                current = entry.get('currentTime') or 0
+                duration = entry.get('duration') or 0
+                watched = bool(entry.get('watched')) or (
+                    duration > 0 and current >= WATCHED_THRESHOLD * duration)
                 st = entry.get('status')
                 p = entry.get('progress', {}) or {}
                 if st == 'ready':
@@ -235,6 +247,8 @@ class SeriesManager:
                 "ep": ep, "title": e.get('title'), "overview": e.get('overview'),
                 "still": e.get('still'), "state": state,
                 "progress": round(progress, 3), "phase": phase,
+                "currentTime": round(current, 1), "duration": round(duration, 1),
+                "watched": watched,
             })
         return {"season": season, "episodes": out}
 

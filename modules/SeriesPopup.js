@@ -18,6 +18,7 @@ const POLL_MS = 1500;
 // Icône + libellé par état d'épisode (repli DejaVu couvre ces glyphes).
 const STATE = {
   ready: { icon: '▶', label: 'Available' },
+  watched: { icon: '✓', label: 'Watched' },
   downloading: { icon: '…', label: 'Downloading…' },
   error: { icon: '!', label: 'Failed' },
   missing: { icon: '+', label: 'Not downloaded' },
@@ -149,6 +150,8 @@ export class SeriesPopup extends EventEmitter {
   _renderEpisodes() {
     const eps = this.episodes;
     const owned = eps.filter((e) => e.state === 'ready').length;
+    // Pas de compteur « vus » ici : il ferait passer l'en-tête sur deux lignes
+    // pour les titres longs, et la coche de chaque ligne le dit déjà.
     this.metaEl.textContent = `Season ${this.season} · ${owned}/${eps.length}`;
     if (!eps.length) {
       this.episodesEl.innerHTML = '<div class="sp-msg">No episodes</div>';
@@ -157,14 +160,16 @@ export class SeriesPopup extends EventEmitter {
     }
     this.episodesEl.innerHTML = eps.map((e) => {
       const st = this._effState(e);
+      // Épisode déjà vu → coche à la place du ▶ (repère de progression dans la série).
+      const seen = st === 'ready' && e.watched;
       // En cours → on montre le % (même 0 %) à la place de l'icône « … ».
       const stateCell = st === 'downloading'
         ? `${Math.round((e.progress || 0) * 100)}%`
-        : (STATE[st] || {}).icon || '';
+        : (STATE[seen ? 'watched' : st] || {}).icon || '';
       // Couleur du % : cyan en téléchargement, vert en conversion (comme les films).
       const conv = st === 'downloading' && e.phase === 'transcoding' ? ' sp-ep--converting' : '';
       return `
-        <div class="sp-ep sp-ep--${st}${conv}" data-ep="${e.ep}">
+        <div class="sp-ep sp-ep--${st}${conv}${seen ? ' sp-ep--watched' : ''}" data-ep="${e.ep}">
           <span class="sp-ep-state">${stateCell}</span>
           <span class="sp-ep-num">E${String(e.ep).padStart(2, '0')}</span>
           <span class="sp-ep-title">${escapeHtml(e.title || '')}</span>
@@ -192,7 +197,8 @@ export class SeriesPopup extends EventEmitter {
     }
     this.detailEl.classList.remove('is-empty');
     const st = this._effState(e);
-    const meta = STATE[st] || STATE.missing;
+    const seen = st === 'ready' && e.watched;
+    const meta = STATE[seen ? 'watched' : st] || STATE.missing;
     const num = `S${String(this.season).padStart(2, '0')}E${String(e.ep).padStart(2, '0')}`;
     const action = st === 'ready'
       ? '<button class="crt-btn sp-play" type="button">▶ Play</button>'
@@ -208,6 +214,15 @@ export class SeriesPopup extends EventEmitter {
       stateBlock = `
         <div class="sp-d-state sp-d-state--${conv ? 'converting' : 'downloading'}">${phaseLabel(e.phase, pct)}</div>
         <div class="sp-d-prog"><span class="crt-bar mb-bar mb-bar--${conv ? 'convert' : 'download'}"><span class="crt-bar-fill" style="width:${pct}%"></span></span></div>`;
+    } else if (st === 'ready') {
+      // Épisode disponible → avancement de LECTURE (comme le volet film).
+      const ratio = e.duration ? Math.max(0, Math.min(1, (e.currentTime || 0) / e.duration)) : 0;
+      const time = e.duration
+        ? `<div class="sp-d-time">${fmtTime(e.currentTime || 0)} / ${fmtTime(e.duration)}</div>`
+        : '';
+      stateBlock = `
+        <div class="sp-d-state sp-d-state--${seen ? 'watched' : 'ready'}">${meta.icon} ${meta.label}</div>
+        <div class="sp-d-prog">${time}<span class="crt-bar mb-bar mb-bar--seen"><span class="crt-bar-fill" style="width:${Math.round(ratio * 100)}%"></span></span></div>`;
     } else {
       stateBlock = `<div class="sp-d-state sp-d-state--${st}">${meta.icon} ${meta.label}</div>`;
     }
@@ -262,6 +277,15 @@ function phaseLabel(phase, pct) {
   if (phase === 'downloading') return `Downloading ${pct}%`;
   if (phase === 'fetching-subs') return 'Subtitles…';
   return 'Queued…';
+}
+
+/** hh:mm:ss (ou mm:ss) — même format que le volet d'info des films. */
+function fmtTime(sec) {
+  const s = Math.max(0, Math.round(sec));
+  const pad = (n) => String(n).padStart(2, '0');
+  const h = Math.floor(s / 3600);
+  return h ? `${pad(h)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`
+    : `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
 }
 
 function escapeHtml(str) {

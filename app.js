@@ -410,7 +410,8 @@ function attachMovieHandlers() {
   const advisor = app.movieAdvisor;
   const seriesPopup = app.seriesPopup;
   const goLibrary = () => {
-    if (state.isMovieMode) pm.stopMovie();
+    // On RESTE sur la chaîne Movies : ne pas relancer YouTube derrière l'overlay.
+    if (state.isMovieMode) pm.stopMovie(false);
     controls.hide();
     hud.hide();
     keyboard.close();
@@ -428,7 +429,7 @@ function attachMovieHandlers() {
     keyboard.open();
   };
   const goAdvisor = () => {
-    if (state.isMovieMode) pm.stopMovie();
+    if (state.isMovieMode) pm.stopMovie(false);
     controls.hide();
     hud.hide();
     keyboard.close();

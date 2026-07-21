@@ -552,6 +552,9 @@ body {
 #series-popup .sp-ep--downloading { color: var(--crt-dim); }
 #series-popup .sp-ep--downloading .sp-ep-state { color: var(--crt-f3); }  /* téléchargement : cyan */
 #series-popup .sp-ep--converting .sp-ep-state { color: var(--crt-f1); }   /* conversion : vert */
+/* Déjà vu : coche + titre en retrait, pour repérer où l'on en est. */
+#series-popup .sp-ep--watched .sp-ep-state { color: var(--crt-dim); }
+#series-popup .sp-ep--watched .sp-ep-title { color: var(--crt-dim); }
 #series-popup .sp-ep--missing { --cur: hand; }
 #series-popup .sp-ep--missing .sp-ep-state { color: var(--crt-accent); }  /* + ambre */
 #series-popup .sp-ep--missing .sp-ep-title { color: var(--crt-dim); }
@@ -592,6 +595,7 @@ body {
 #series-popup .sp-d-title { color: var(--crt-accent); font-size: 2.8vw; font-weight: bold; }
 #series-popup .sp-d-state { font-size: 2.3vw; }
 #series-popup .sp-d-state--ready { color: var(--crt-f1); }
+#series-popup .sp-d-state--watched { color: var(--crt-dim); }
 #series-popup .sp-d-state--downloading { color: var(--crt-f3); }  /* téléchargement : cyan */
 #series-popup .sp-d-state--converting { color: var(--crt-f1); }   /* conversion : vert */
 #series-popup .sp-d-state--missing { color: var(--crt-accent); }
@@ -602,7 +606,9 @@ body {
 #series-popup .mb-bar--convert .crt-bar-fill { background-color: var(--crt-f1); }
 #series-popup .sp-d-action .crt-btn { width: 100%; text-align: center; margin-top: 0.4vh; }
 #series-popup .sp-d-prog { margin-top: 0.4vh; }
-#series-popup .sp-d-prog .crt-bar { width: 100%; }
+#series-popup .sp-d-prog .crt-bar { width: 100%; display: block; height: 2.4vh; }
+/* Avancement de lecture : ambre (défaut .crt-bar-fill), comme le volet film. */
+#series-popup .sp-d-time { color: var(--crt-dim); font-size: 2vw; margin-bottom: 0.4vh; }
 #series-popup .sp-d-overview {
   flex: 0 0 auto;               /* hauteur naturelle → le volet .sp-detail défile */
   color: var(--crt-text);
