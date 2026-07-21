@@ -44,7 +44,6 @@ export class SeriesPopup extends EventEmitter {
     root.innerHTML = `
       <div class="crt-header">
         <span class="crt-title sp-title"></span>
-        <span class="crt-meta sp-meta"></span>
         <span class="crt-clock-wrap"><span class="crt-clock"></span><span class="crt-weather"></span><span class="crt-date"></span></span>
       </div>
       <div class="sp-body">
@@ -65,7 +64,6 @@ export class SeriesPopup extends EventEmitter {
 
     this.root = root;
     this.titleEl = root.querySelector('.sp-title');
-    this.metaEl = root.querySelector('.sp-meta');
     this.seasonsEl = root.querySelector('.sp-seasons');
     this.episodesEl = root.querySelector('.sp-episodes');
     this.detailEl = root.querySelector('.sp-detail');
@@ -153,10 +151,8 @@ export class SeriesPopup extends EventEmitter {
 
   _renderEpisodes() {
     const eps = this.episodes;
-    const owned = eps.filter((e) => e.state === 'ready').length;
-    // Pas de compteur « vus » ici : il ferait passer l'en-tête sur deux lignes
-    // pour les titres longs, et la coche de chaque ligne le dit déjà.
-    this.metaEl.textContent = `Season ${this.season} · ${owned}/${eps.length}`;
+    // L'en-tête est réservé au titre de la série : la saison active est déjà
+    // surlignée dans sa barre, et l'état de chaque épisode est sur sa ligne.
     if (!eps.length) {
       this.episodesEl.innerHTML = '<div class="sp-msg">No episodes</div>';
       this._renderDetail(null);

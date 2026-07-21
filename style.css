@@ -497,6 +497,16 @@ body {
 /* Barre d'onglets de saisons : UNE seule ligne, défilement horizontal (via les
    touches haut/bas de la télécommande quand la barre est survolée — cf.
    scrollHovered). Gagne de la hauteur pour la liste d'épisodes. */
+/* L'en-tête ne porte plus que le titre de la série : il occupe toute la largeur
+   disponible jusqu'à l'horloge, avec une ellipse s'il est trop long. */
+#series-popup .crt-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 #series-popup .sp-seasons {
   flex: 0 0 auto;
   display: flex;
@@ -507,16 +517,25 @@ body {
   padding: 1vh var(--crt-safe-x);
   border-bottom: 0.28vw solid var(--crt-divider);
 }
-#series-popup .sp-season { white-space: nowrap; }
+/* Pavés carrés, tous de la même taille (« S1 » comme « S38 ») : la barre reste
+   régulière quel que soit le nombre de saisons. box-sizing indispensable, sinon
+   la bordure s'ajouterait au côté et casserait le carré. */
 #series-popup .sp-season {
   --cur: hand;
-  flex: 0 0 auto;
+  box-sizing: border-box;
+  flex: 0 0 7.2vw;
+  width: 7.2vw;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  white-space: nowrap;
   background: var(--crt-panel);
   border: 0.28vw solid transparent;
   color: var(--crt-text);
   font-family: var(--crt-mono);
   font-size: 2.5vw;
-  padding: 0.7vh 1.4vw;
   text-shadow: var(--crt-shadow);
 }
 #series-popup .sp-season.is-active {
