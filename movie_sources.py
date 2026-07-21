@@ -134,6 +134,11 @@ def _human_size(num_bytes):
     return f"{size:.1f} Po"
 
 
+def _redact(text, secret):
+    """Remplace un secret par « *** » dans un texte destiné aux logs."""
+    return text.replace(secret, "***") if secret else text
+
+
 class Indexer:
     """
     Recherche de torrents de films via un indexeur Torznab (Jackett), qui agrège
@@ -147,24 +152,28 @@ class Indexer:
     def available(self):
         return bool(self.indexers)
 
-    def search(self, query, limit=20):
+    def search(self, query, limit=20, cat=None):
         """
-        Retourne une liste de films normalisés :
+        Retourne une liste de films/épisodes normalisés :
         [{title, year, imdbId, cover, torrents: [{quality, seeders, size, magnet}]}]
+        `cat` force une catégorie Torznab (ex. "5000" = TV) ; sinon celle du cfg.
         """
         results = []
         for cfg in self.indexers:
             try:
                 kind = cfg.get("type")
                 if kind == "torznab":
-                    results.extend(self._search_torznab(cfg, query, limit))
+                    results.extend(self._search_torznab(cfg, query, limit, cat))
                 else:
                     print(f"[Indexer] type inconnu : {kind}")
             except Exception as err:  # un indexeur HS ne casse pas la recherche
-                print(f"[Indexer] {cfg.get('name')} en échec : {err}")
+                # requests met l'URL COMPLÈTE dans ses exceptions réseau, apiKey
+                # comprise : on la masque avant d'écrire quoi que ce soit.
+                print(f"[Indexer] {cfg.get('name')} en échec : "
+                      f"{_redact(str(err), cfg.get('apiKey'))}")
         return results
 
-    def _search_torznab(self, cfg, query, limit):
+    def _search_torznab(self, cfg, query, limit, cat=None):
         """
         Indexeur Torznab (Jackett / Prowlarr). Interroge l'agrégat de tous les
         trackers configurés côté Jackett et normalise la réponse RSS/XML dans le
@@ -188,8 +197,9 @@ class Indexer:
 
         url = f"{base}/api/v2.0/indexers/{indexer}/results/torznab/api"
         params = {"apikey": cfg.get("apiKey", ""), "t": "search", "q": query}
-        if cfg.get("cat"):
-            params["cat"] = cfg["cat"]
+        cat = cat or cfg.get("cat")  # argument explicite prioritaire (ex. TV=5000)
+        if cat:
+            params["cat"] = cat
         resp = requests.get(url, params=params, timeout=cfg.get("timeout", 15))
         resp.raise_for_status()
         root = ET.fromstring(resp.content)
@@ -336,6 +346,142 @@ class Tmdb:
             print(f"[TMDB] synopsis indisponible : {err}")
             return None
 
+    # --- Séries (TV) : miroir des méthodes films sur les endpoints /tv ---
+
+    def search_tv(self, query, year=None, language="fr-FR"):
+        """
+        Meilleure série {tmdbId, title, originalTitle, year, posterUrl, overview}
+        ou None. Miroir de `search` sur /search/tv (champs name/first_air_date).
+        """
+        if not self.api_key:
+            return None
+        try:
+            params = {"api_key": self.api_key, "query": query, "language": language}
+            if year:
+                params["first_air_date_year"] = year
+            resp = requests.get(f"{self.BASE}/search/tv", params=params, timeout=8)
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+        except (requests.RequestException, ValueError) as err:
+            print(f"[TMDB] recherche série échouée : {err}")
+            return None
+        if not results:
+            return None
+        return self._tv_summary(results[0])
+
+    def search_tv_all(self, query, language="fr-FR", limit=10):
+        """Liste de séries candidates (pour l'écran de recherche)."""
+        if not self.api_key:
+            return []
+        try:
+            resp = requests.get(
+                f"{self.BASE}/search/tv",
+                params={"api_key": self.api_key, "query": query, "language": language},
+                timeout=8,
+            )
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+        except (requests.RequestException, ValueError) as err:
+            print(f"[TMDB] recherche série échouée : {err}")
+            return []
+        return [self._tv_summary(m) for m in results[:limit]]
+
+    def _tv_summary(self, m):
+        poster = m.get("poster_path")
+        y = (m.get("first_air_date") or "")[:4]
+        return {
+            "tmdbId": m.get("id"),
+            "title": m.get("name"),
+            "originalTitle": m.get("original_name") or m.get("name"),
+            "year": int(y) if y.isdigit() else None,
+            "posterUrl": f"{self.IMG}/w500{poster}" if poster else None,
+            "overview": m.get("overview"),
+        }
+
+    def english_tv_title(self, tv_id):
+        """Titre anglais d'une série par id TMDB (pour la recherche torrent)."""
+        if not self.api_key or not tv_id:
+            return None
+        try:
+            resp = requests.get(
+                f"{self.BASE}/tv/{tv_id}",
+                params={"api_key": self.api_key, "language": "en-US"},
+                timeout=8,
+            )
+            resp.raise_for_status()
+            return resp.json().get("name")
+        except (requests.RequestException, ValueError) as err:
+            print(f"[TMDB] titre anglais série indisponible : {err}")
+            return None
+
+    def tv_details(self, tv_id, language="fr-FR"):
+        """
+        Détails d'une série : statut (Returning Series/Ended…) et la liste des
+        saisons {seasonNumber, episodeCount, name}. La saison 0 (specials) est
+        conservée mais l'UI peut la masquer. None si échec.
+        """
+        if not self.api_key or not tv_id:
+            return None
+        try:
+            resp = requests.get(
+                f"{self.BASE}/tv/{tv_id}",
+                params={"api_key": self.api_key, "language": language},
+                timeout=8,
+            )
+            resp.raise_for_status()
+            d = resp.json()
+        except (requests.RequestException, ValueError) as err:
+            print(f"[TMDB] détails série indisponibles : {err}")
+            return None
+        poster = d.get("poster_path")
+        y = (d.get("first_air_date") or "")[:4]
+        seasons = [
+            {
+                "seasonNumber": s.get("season_number"),
+                "episodeCount": s.get("episode_count"),
+                "name": s.get("name"),
+            }
+            for s in (d.get("seasons") or [])
+        ]
+        return {
+            "tmdbId": d.get("id"),
+            "title": d.get("name"),
+            "originalTitle": d.get("original_name") or d.get("name"),
+            "year": int(y) if y.isdigit() else None,
+            "posterUrl": f"{self.IMG}/w500{poster}" if poster else None,
+            "overview": d.get("overview"),
+            "status": d.get("status"),
+            "numberOfSeasons": d.get("number_of_seasons"),
+            "seasons": seasons,
+        }
+
+    def tv_season(self, tv_id, season_number, language="fr-FR"):
+        """
+        Épisodes d'une saison : liste {ep, title, overview, still}. None si échec.
+        """
+        if not self.api_key or not tv_id:
+            return None
+        try:
+            resp = requests.get(
+                f"{self.BASE}/tv/{tv_id}/season/{season_number}",
+                params={"api_key": self.api_key, "language": language},
+                timeout=8,
+            )
+            resp.raise_for_status()
+            eps = resp.json().get("episodes", [])
+        except (requests.RequestException, ValueError) as err:
+            print(f"[TMDB] saison indisponible : {err}")
+            return None
+        return [
+            {
+                "ep": e.get("episode_number"),
+                "title": e.get("name"),
+                "overview": e.get("overview") or None,
+                "still": f"{self.IMG}/w300{e['still_path']}" if e.get("still_path") else None,
+            }
+            for e in eps
+        ]
+
     def download_poster(self, poster_url, dest_path):
         """Télécharge une affiche vers dest_path. Retourne True si OK."""
         if not poster_url:
@@ -362,6 +508,37 @@ _TORRENT_TAGS = re.compile(
 )
 
 
+# --- Séries : extraction saison/épisode d'un nom de release ou de fichier ---
+# À appliquer AVANT clean_torrent_title (dont les balises greedy coupent le SxxExx).
+_EP_PATTERNS = [
+    re.compile(r"\bS(\d{1,2})[\s._-]*E(\d{1,3})", re.I),                 # S02E03 / S02.E03
+    re.compile(r"\b(\d{1,2})x(\d{1,3})\b", re.I),                        # 2x03
+    re.compile(r"\bSeason[\s._-]*(\d{1,2})[\s._-]*Episode[\s._-]*(\d{1,3})", re.I),
+]
+_SEASON_ONLY_PATTERNS = [
+    re.compile(r"\bS(\d{1,2})\b(?![\s._-]*E\d)", re.I),                  # S02 (pas suivi de Exx)
+    re.compile(r"\bSeason[\s._-]*(\d{1,2})\b", re.I),                    # Season 2
+]
+
+
+def parse_episode(raw):
+    """
+    Extrait {season:int, episode:int} d'un nom (release ou fichier). Si seule la
+    saison est reconnue (pack de saison) → {season, episode:None}. None sinon.
+    """
+    if not raw:
+        return None
+    for pat in _EP_PATTERNS:
+        m = pat.search(raw)
+        if m:
+            return {"season": int(m.group(1)), "episode": int(m.group(2))}
+    for pat in _SEASON_ONLY_PATTERNS:
+        m = pat.search(raw)
+        if m:
+            return {"season": int(m.group(1)), "episode": None}
+    return None
+
+
 def clean_torrent_title(raw):
     """
     Extrait un (titre, année) exploitables d'un nom de torrent bruité.
@@ -382,6 +559,12 @@ def clean_torrent_title(raw):
 # Sous-titres externes (OpenSubtitles) — SRT converti en WebVTT via ffmpeg
 # ---------------------------------------------------------------------------
 
+def _venv_bin(name):
+    """Chemin d'un exécutable du venv du projet, ou None s'il n'y est pas."""
+    path = Path(__file__).resolve().parent / "venv" / "bin" / name
+    return str(path) if os.access(path, os.X_OK) else None
+
+
 class Subtitles:
     """
     Récupère les meilleurs sous-titres fr/en depuis OpenSubtitles (clé API +
@@ -397,8 +580,10 @@ class Subtitles:
         self.password = password or ""
         self.ffmpeg = ffmpeg
         # Resynchro auto (best-effort) : activée seulement si le binaire est là.
-        # Non installé par défaut (ffsubsync tire numpy/scipy) ; voir README.
-        self.ffsubsync = shutil.which("ffsubsync")
+        # Il vit dans le venv du projet, alors que .xinitrc lance l'API avec le
+        # python système : on le cherche donc aussi à côté des sources (son
+        # shebang pointe le python du venv, il s'exécute donc de façon autonome).
+        self.ffsubsync = shutil.which("ffsubsync") or _venv_bin("ffsubsync")
         self._token = None
         self._token_ts = 0
 
@@ -484,7 +669,8 @@ class Subtitles:
         return self._token
 
     def fetch(self, imdb_id=None, tmdb_id=None, title=None, year=None,
-              out_dir=".", base_name="movie", video_path=None, want_langs=None):
+              out_dir=".", base_name="movie", video_path=None, want_langs=None,
+              season=None, episode=None):
         """
         Cherche, télécharge et convertit les sous-titres en WebVTT.
 
@@ -504,7 +690,8 @@ class Subtitles:
         out = {}
         for lang in langs:
             try:
-                file_id = self._best_file_id(lang, imdb_id, tmdb_id, title, year, movie_hash)
+                file_id = self._best_file_id(lang, imdb_id, tmdb_id, title, year,
+                                             movie_hash, season, episode)
                 if not file_id:
                     continue
                 srt_text = self._download_srt(file_id)
@@ -521,12 +708,18 @@ class Subtitles:
                 print(f"[OpenSubtitles] {lang} échoué : {err}")
         return out
 
-    def _best_file_id(self, lang, imdb_id, tmdb_id, title=None, year=None, movie_hash=None):
+    def _best_file_id(self, lang, imdb_id, tmdb_id, title=None, year=None,
+                      movie_hash=None, season=None, episode=None):
         params = {"languages": lang, "order_by": "download_count"}
         # Le moviehash cible le release exact : on le passe EN PLUS des autres
         # critères, puis on privilégie les résultats qui matchent le hash.
         if movie_hash:
             params["moviehash"] = movie_hash
+        # Série : restreint à l'épisode voulu (OpenSubtitles gère season/episode).
+        if season is not None:
+            params["season_number"] = season
+        if episode is not None:
+            params["episode_number"] = episode
         if imdb_id:
             params["imdb_id"] = str(imdb_id).lstrip("t")  # 'tt123' -> '123'
         elif tmdb_id:

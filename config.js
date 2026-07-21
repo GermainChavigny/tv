@@ -38,9 +38,16 @@ const config = {
       moviesStatus: '/movies/status',
       moviesCancel: '/movies/cancel',
       moviesDelete: '/movies/delete',
+      moviesDisk: '/movies/disk',
       // Movie Advisor (recommandations IA + blacklist « Forget »)
       advisorRecommend: '/advisor/recommend',
       advisorForget: '/advisor/forget',
+      // Séries (TMDB TV + téléchargement par épisode/saison/série)
+      seriesSearch: '/series/search',
+      seriesAdd: '/series/add',
+      series: '/series',                // + /<id> ; + /<id>/season/<n>
+      seriesDownload: '/series/download',
+      seriesRecheck: '/series/recheck',
       // Météo (proxy Open-Meteo, sans clé)
       weather: '/weather',
     },

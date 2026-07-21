@@ -229,6 +229,7 @@ body {
 #movie-browser,
 #movie-search,
 #movie-advisor,
+#series-popup,
 #virtual-keyboard,
 #movie-controls,
 #subtitle-hud,
@@ -258,27 +259,31 @@ body {
 /* Scrollbars rétro : grosses barres, aplaties (pas d'arrondi), aux couleurs du thème. */
 #movie-browser ::-webkit-scrollbar,
 #movie-search ::-webkit-scrollbar,
-#movie-advisor ::-webkit-scrollbar {
+#movie-advisor ::-webkit-scrollbar,
+#series-popup ::-webkit-scrollbar {
   width: 2vw;
 }
 
 #movie-browser ::-webkit-scrollbar-track,
 #movie-search ::-webkit-scrollbar-track,
-#movie-advisor ::-webkit-scrollbar-track {
+#movie-advisor ::-webkit-scrollbar-track,
+#series-popup ::-webkit-scrollbar-track {
   background: var(--crt-panel-2);
   /*border-left: 0.28vw solid var(--crt-border);*/
 }
 
 #movie-browser ::-webkit-scrollbar-thumb,
 #movie-search ::-webkit-scrollbar-thumb,
-#movie-advisor ::-webkit-scrollbar-thumb {
+#movie-advisor ::-webkit-scrollbar-thumb,
+#series-popup ::-webkit-scrollbar-thumb {
   background: var(--crt-dim);
   border: 0.28vw solid var(--crt-bg);
 }
 
 #movie-browser ::-webkit-scrollbar-thumb:hover,
 #movie-search ::-webkit-scrollbar-thumb:hover,
-#movie-advisor ::-webkit-scrollbar-thumb:hover {
+#movie-advisor ::-webkit-scrollbar-thumb:hover,
+#series-popup ::-webkit-scrollbar-thumb:hover {
   background: var(--crt-accent);
 }
 
@@ -460,20 +465,260 @@ body {
 
 #movie-browser.open { display: flex; }
 
+/* ============ POPUP SÉRIES (saisons / épisodes) ============ */
+#series-popup {
+  position: absolute;
+  z-index: 40; /* au-dessus de la bibliothèque (20) d'où elle s'ouvre */
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  background: linear-gradient(359deg, #000219, #000f76);
+  overflow: hidden;
+}
+#series-popup.open { display: flex; }
+
+#series-popup .sp-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+/* Colonne gauche : onglets saisons + liste d'épisodes. min-width:0 est ESSENTIEL
+   pour qu'une longue barre de saisons ne pousse pas le volet détail hors écran. */
+#series-popup .sp-left {
+  flex: 1 1 60%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 0.42vw solid var(--crt-border);
+}
+
+/* Barre d'onglets de saisons : UNE seule ligne, défilement horizontal (via les
+   touches haut/bas de la télécommande quand la barre est survolée — cf.
+   scrollHovered). Gagne de la hauteur pour la liste d'épisodes. */
+/* L'en-tête ne porte plus que le titre de la série : il occupe toute la largeur
+   disponible jusqu'à l'horloge, avec une ellipse s'il est trop long. */
+#series-popup .crt-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#series-popup .sp-seasons {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0 0.83vw;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1vh var(--crt-safe-x);
+  border-bottom: 0.28vw solid var(--crt-divider);
+}
+/* Pavés carrés, tous de la même taille (« S1 » comme « S38 ») : la barre reste
+   régulière quel que soit le nombre de saisons. box-sizing indispensable, sinon
+   la bordure s'ajouterait au côté et casserait le carré. */
+#series-popup .sp-season {
+  --cur: hand;
+  box-sizing: border-box;
+  flex: 0 0 7.2vw;
+  width: 7.2vw;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  white-space: nowrap;
+  background: var(--crt-panel);
+  border: 0.28vw solid transparent;
+  color: var(--crt-text);
+  font-family: var(--crt-mono);
+  font-size: 2.5vw;
+  text-shadow: var(--crt-shadow);
+}
+#series-popup .sp-season.is-active {
+  border-color: var(--crt-accent);
+  color: var(--crt-accent);
+}
+
+/* Liste des épisodes. */
+#series-popup .sp-episodes {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0.5vh var(--crt-safe-x);
+}
+#series-popup .sp-ep {
+  --cur: hand;
+  display: flex;
+  align-items: baseline;
+  gap: 0 1.11vw;
+  padding: 1vh 0.5vw;
+  border-bottom: 0.14vw solid var(--crt-divider);
+  font-size: 2.6vw;
+}
+#series-popup .sp-ep-state { flex: 0 0 6vw; text-align: left; font-weight: bold; }
+#series-popup .sp-ep-num { flex: 0 0 8vw; color: var(--crt-dim); }
+#series-popup .sp-ep-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#series-popup .sp-ep--ready .sp-ep-state { color: var(--crt-f1); }        /* ▶ vert */
+#series-popup .sp-ep--downloading { color: var(--crt-dim); }
+#series-popup .sp-ep--downloading .sp-ep-state { color: var(--crt-f3); }  /* téléchargement : cyan */
+#series-popup .sp-ep--converting .sp-ep-state { color: var(--crt-f1); }   /* conversion : vert */
+/* Déjà vu : coche + titre en retrait, pour repérer où l'on en est. */
+#series-popup .sp-ep--watched .sp-ep-state { color: var(--crt-dim); }
+#series-popup .sp-ep--watched .sp-ep-title { color: var(--crt-dim); }
+#series-popup .sp-ep--missing { --cur: hand; }
+#series-popup .sp-ep--missing .sp-ep-state { color: var(--crt-accent); }  /* + ambre */
+#series-popup .sp-ep--missing .sp-ep-title { color: var(--crt-dim); }
+#series-popup .sp-ep--error .sp-ep-state { color: #e07a7a; }
+#series-popup .sp-ep.is-active {
+  background-color: var(--crt-accent);
+  color: var(--crt-accent-ink);
+  text-shadow: none;
+}
+#series-popup .sp-ep.is-active,
+#series-popup .sp-ep.is-active .sp-ep-num,
+#series-popup .sp-ep.is-active .sp-ep-state,
+#series-popup .sp-ep.is-active .sp-ep-title { color: var(--crt-accent-ink); }
+#series-popup .sp-msg { padding: 3vh var(--crt-safe-x); color: var(--crt-dim); font-size: 2.5vw; }
+
+/* Volet d'info de l'épisode sélectionné (droite). */
+#series-popup .sp-detail {
+  flex: 1 1 40%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.2vh 1.11vw 1.2vh 1.4vw;
+  gap: 0.6vh 0;
+}
+/* Les enfants en width:100% (vignette, barre, bouton) portent une bordure : en
+   content-box elle s'ajoutait aux 100 % et faisait déborder le volet de quelques
+   pixels — d'où une mini barre de défilement horizontale. */
+#series-popup .sp-detail * { box-sizing: border-box; }
+#series-popup .sp-detail > * { flex: 0 0 auto; }
+#series-popup .sp-detail.is-empty { justify-content: center; text-align: center; color: var(--crt-dim); }
+#series-popup .sp-d-still {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background-color: var(--crt-panel);
+  border: 0.28vw solid var(--crt-accent);
+}
+#series-popup .sp-d-still img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#series-popup .sp-d-still.no-poster img { display: none; }
+#series-popup .sp-d-num { color: var(--crt-dim); font-size: 2.3vw; margin-top: 0.5vh; }
+#series-popup .sp-d-title { color: var(--crt-accent); font-size: 2.8vw; font-weight: bold; }
+#series-popup .sp-d-state { font-size: 2.3vw; }
+#series-popup .sp-d-state--ready { color: var(--crt-f1); }
+#series-popup .sp-d-state--watched { color: var(--crt-dim); }
+#series-popup .sp-d-state--downloading { color: var(--crt-f3); }  /* téléchargement : cyan */
+#series-popup .sp-d-state--converting { color: var(--crt-f1); }   /* conversion : vert */
+#series-popup .sp-d-state--missing { color: var(--crt-accent); }
+#series-popup .sp-d-state--error { color: #e07a7a; }
+/* Remplissage de la barre du volet détail (les règles films sont scopées
+   #movie-browser → il faut les redéclarer ici). */
+#series-popup .mb-bar--download .crt-bar-fill { background-color: var(--crt-f3); }
+#series-popup .mb-bar--convert .crt-bar-fill { background-color: var(--crt-f1); }
+#series-popup .sp-d-action .crt-btn { width: 100%; text-align: center; margin-top: 0.4vh; }
+#series-popup .sp-d-prog { margin-top: 0.4vh; }
+#series-popup .sp-d-prog .crt-bar { width: 100%; display: block; height: 2.4vh; }
+/* Avancement de lecture : ambre (défaut .crt-bar-fill), comme le volet film. */
+#series-popup .sp-d-time { color: var(--crt-dim); font-size: 2vw; margin-bottom: 0.4vh; }
+#series-popup .sp-d-overview {
+  flex: 0 0 auto;               /* hauteur naturelle → le volet .sp-detail défile */
+  color: var(--crt-text);
+  font-size: 2.15vw;
+  margin-top: 0.6vh;
+}
+
+/* Actions du bas (télécharger saison / série). */
+/* Bandeau d'issue de recherche (aucune source, indexeur injoignable…) : masqué
+   tant qu'il n'y a rien à dire, pour ne pas manger de hauteur. */
+#series-popup .sp-notice {
+  display: none;
+  flex: 0 0 auto;
+  padding: 1vh var(--crt-safe-x) 0;
+  font-size: 2.2vw;
+  color: var(--crt-accent);
+}
+#series-popup.has-notice .sp-notice { display: block; }
+
+#series-popup .sp-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0 1.67vw;
+  padding: 1.2vh var(--crt-safe-x);
+  border-top: 0.28vw solid var(--crt-divider);
+}
+#series-popup .sp-actions .crt-btn { flex: 1 1 0; text-align: center; }
+
 #movie-browser .mb-body {
   flex: 1 1 auto;
   display: flex;
   min-height: 0;
 }
 
-/* Colonne liste (gauche) — plus large que le détail.
-   Bord gauche = bord de l'écran → padding en marge sûre de ce côté. */
-#movie-browser .mb-list {
+/* Colonne gauche = onglets (Movies/Series) + liste défilante. Plus large que
+   le détail ; le bord droit sépare de la colonne détail. */
+#movie-browser .mb-left {
   flex: 1 1 66%;
-  overflow-y: auto;
-  padding: 1.04vh 1.11vw 1.04vh var(--crt-safe-x);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   border-right: 0.42vw solid var(--crt-border);
 }
+
+/* Onglets Movies / Series (masqués si une seule catégorie existe). */
+/* Espace disque restant : centré dans l'espace laissé entre « LIBRARY » et
+   l'horloge (flex:1 → il absorbe toute la place disponible). */
+#movie-browser .crt-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--crt-dim);
+}
+
+#movie-browser .mb-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0 0.83vw;
+  padding: 0.7vh var(--crt-safe-x) 0;
+}
+#movie-browser .mb-tab {
+  --cur: hand;
+  background: none;
+  border: 0;
+  border-bottom: 0.42vw solid transparent;
+  color: var(--crt-dim);
+  font-family: var(--crt-mono);
+  font-size: 2.65vw;
+  text-transform: uppercase;
+  padding: 0.5vh 1.11vw;
+  text-shadow: var(--crt-shadow);
+}
+#movie-browser .mb-tab.is-active {
+  color: var(--crt-accent);
+  border-bottom-color: var(--crt-accent);
+}
+
+/* Bord gauche = bord de l'écran → padding en marge sûre de ce côté. */
+#movie-browser .mb-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 1.04vh 1.11vw 1.04vh var(--crt-safe-x);
+}
+
+/* Compteur d'épisodes d'une ligne série (obtenus / total). */
+#movie-browser .mb-row-count { color: var(--crt-f3); }
 
 /* Ligne : caret · titre (1fr) · barre segmentée (à droite, même ligne). */
 #movie-browser .mb-row {
@@ -600,7 +845,12 @@ body {
   margin-top: 1.74vh;
   font-size: 2.65vw;
   color: var(--crt-text);
+  /* Un message d'erreur de torrent est long et sans espaces : il doit se couper
+     plutôt que déborder du volet. */
+  word-break: break-word;
 }
+
+#movie-browser .mb-d-prog--error { color: #e07a7a; }
 
 /* display:block indispensable : .crt-bar est un <span> ; inline, sa hauteur
    serait ignorée (dans les lignes de la liste c'est un grid-item, déjà blockifié). */
@@ -800,11 +1050,23 @@ body {
   padding: 1.74vh var(--crt-safe-x);
 }
 
+/* Ligne du haut : invite (gauche) + bascule Film/Série (droite). */
+#virtual-keyboard .vk-toprow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0 1.11vw;
+  margin-bottom: 0.7vh;
+}
 #virtual-keyboard .vk-prompt {
   font-size: 2.65vw;
   color: var(--crt-dim);
   text-transform: uppercase;
-  margin-bottom: 0.7vh;
+}
+#virtual-keyboard .vk-kind {
+  flex: 0 0 auto;
+  font-size: 2.5vw;
+  padding: 0.6vh 1.4vw;
 }
 
 #virtual-keyboard .vk-display {
@@ -1097,35 +1359,28 @@ body {
   color: var(--crt-f2);
 }
 
-/* Champ libre ajouté au prompt : centré verticalement dans l'espace entre la
-   citation et le bas de la colonne (margin auto), gros bouton lisible. */
-#movie-advisor .adv-keywords {
+/* Type + mots-clés : rangée alignée sur les colonnes de la grille de critères
+   (mêmes largeurs, même gouttière), hauteur libre plutôt que 1fr. */
+#movie-advisor .adv-top {
   flex: 0 0 auto;
-  margin: auto 0;
-  width: 100%;
-  padding: 3.3vh 0.9vw;
-  font-size: 2.76vw;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 1vw;
+}
+
+#movie-advisor .adv-top .adv-crit { padding: 1.4vh 1vw; }
+
+/* Le champ libre peut être long : on le laisse tenir sur deux lignes, contrairement
+   aux valeurs de critères (une ligne + ellipse). */
+#movie-advisor .adv-keywords .adv-crit-val {
   text-transform: none;
-  color: var(--crt-dim);
+  white-space: normal;
+  line-height: 1.1;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
-  overflow: hidden;
   word-break: break-word;
-}
-
-/* Renseigné : contour + texte ambre pour signaler qu'il agit sur la recherche. */
-#movie-advisor .adv-keywords.is-set {
-  color: var(--crt-accent);
-  border-color: var(--crt-accent);
-}
-
-#movie-advisor .adv-keywords:hover {
-  background-color: var(--crt-accent);
-  color: var(--crt-accent-ink);
-  border-color: var(--crt-accent);
-  text-shadow: none;
 }
 
 #movie-advisor .adv-col {

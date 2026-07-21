@@ -24,6 +24,10 @@ export class PlayerManager extends EventEmitter {
     // Décalage des sous-titres PAR LANGUE (secondes, + = plus tard) : une langue
     // peut être calée différemment d'une autre. Ex. { fr: 0.3, en: -0.2 }.
     this.subtitleOffsets = {};
+    // Décalage RÉELLEMENT appliqué aux cues de chaque piste. Le .vtt peut être
+    // chargé après coup (fetch séparé) et repart alors de ses temps d'origine :
+    // ce registre dit quoi rattraper, et évite de décaler deux fois.
+    this._shiftApplied = {};
 
     // Vidéo d'intro locale (boucle native, sans aucune UI YouTube), masquée dès
     // qu'une chaîne ou un film prend le relais.
@@ -96,7 +100,7 @@ export class PlayerManager extends EventEmitter {
 
     // Exit movie mode if we were in it
     if (this.state.isMovieMode) {
-      this.stopMovie();
+      this.stopMovie(false); // la playlist demandée est chargée juste après
     }
 
     // Get last saved position, unless this is a live/noSave playlist
@@ -224,6 +228,7 @@ export class PlayerManager extends EventEmitter {
       for (const lang of langs) savedOffsets[lang] = entry.subtitleOffset;
     }
     this.subtitleOffsets = { ...(savedOffsets || {}) };
+    this._shiftApplied = {}; // nouvelles pistes → rien n'est encore décalé
 
     // Signale les langues de sous-titres disponibles : les contrôles associés
     // s'adaptent (masqués si la liste est vide).
@@ -244,6 +249,12 @@ export class PlayerManager extends EventEmitter {
       track.src = this.apiClient.subtitleUrl(entry.id, lang);
       // Attribut natif : une seule piste visible au départ (fiable dès le 1er rendu).
       if (lang === defaultLang) track.default = true;
+      // Le .vtt vient d'être (re)parsé : les cues sont revenues à leurs temps
+      // d'origine, il faut ré-appliquer le décalage mémorisé de CETTE langue.
+      track.addEventListener('load', () => {
+        this._shiftApplied[lang] = 0;
+        this._ensureShifts();
+      });
       this.moviePlayer.appendChild(track);
       this.subtitleTracks[lang] = track;
     }
@@ -254,9 +265,7 @@ export class PlayerManager extends EventEmitter {
     // et appliquer les décalages mémorisés (par langue) sur chaque piste.
     this.moviePlayer.addEventListener('loadeddata', () => {
       this.applySubtitleMode();
-      for (const [lang, off] of Object.entries(this.subtitleOffsets)) {
-        if (off) this._shiftCues(lang, off);
-      }
+      this._ensureShifts();
     }, { once: true });
     this.applySubtitleMode();
     this.emit('subtitleModeChanged', this.subtitleMode);
@@ -268,17 +277,36 @@ export class PlayerManager extends EventEmitter {
     return this.subtitleOffsets[this.subtitleMode] || 0;
   }
 
-  /** Décale les cues d'UNE langue de `delta` secondes. */
+  /**
+   * Décale les cues d'UNE langue de `delta` secondes.
+   * @returns {boolean} vrai si les cues étaient chargées (décalage effectif).
+   */
   _shiftCues(lang, delta) {
     const tracks = this.moviePlayer.textTracks || [];
+    let done = false;
     for (let i = 0; i < tracks.length; i++) {
       if (tracks[i].language !== lang) continue;
       const cues = tracks[i].cues;
-      if (!cues) continue;
+      if (!cues || !cues.length) continue;
       for (let j = 0; j < cues.length; j++) {
         cues[j].startTime = Math.max(0, cues[j].startTime + delta);
         cues[j].endTime = Math.max(0, cues[j].endTime + delta);
       }
+      done = true;
+    }
+    return done;
+  }
+
+  /**
+   * Rattrape, pour CHAQUE langue, l'écart entre le décalage voulu et celui déjà
+   * appliqué à ses cues. Idempotent : appelable après tout (re)chargement de
+   * piste ou changement de langue sans risque de double décalage.
+   */
+  _ensureShifts() {
+    for (const lang of Object.keys(this.subtitleOffsets)) {
+      const want = this.subtitleOffsets[lang] || 0;
+      const delta = want - (this._shiftApplied[lang] || 0);
+      if (delta && this._shiftCues(lang, delta)) this._shiftApplied[lang] = want;
     }
   }
 
@@ -327,8 +355,14 @@ export class PlayerManager extends EventEmitter {
   applySubtitleMode() {
     const tracks = this.moviePlayer.textTracks || [];
     for (let i = 0; i < tracks.length; i++) {
-      tracks[i].mode = tracks[i].language === this.subtitleMode ? 'showing' : 'disabled';
+      // 'hidden' et non 'disabled' pour les pistes inactives : sur une piste
+      // désactivée, `cues` peut valoir null (le .vtt n'est pas garanti chargé),
+      // et le décalage mémorisé de cette langue passait alors à la trappe —
+      // le HUD annonçait un décalage que les cues n'avaient jamais reçu.
+      // 'hidden' charge les cues sans les afficher : décalage applicable.
+      tracks[i].mode = tracks[i].language === this.subtitleMode ? 'showing' : 'hidden';
     }
+    this._ensureShifts();
   }
 
   /** Bascule letterbox (contain) ⇄ crop (cover) sans réencoder. */
@@ -379,7 +413,9 @@ export class PlayerManager extends EventEmitter {
   adjustSubtitleOffset(delta) {
     const lang = this.subtitleMode;
     if (lang === 'off') return 0; // aucune piste active à recaler
-    this._shiftCues(lang, delta);
+    if (this._shiftCues(lang, delta)) {
+      this._shiftApplied[lang] = Math.round(((this._shiftApplied[lang] || 0) + delta) * 100) / 100;
+    }
     this.subtitleOffsets[lang] = Math.round(((this.subtitleOffsets[lang] || 0) + delta) * 100) / 100;
     this.saveSubtitleSettings();
     const off = this.subtitleOffsets[lang];
@@ -412,9 +448,12 @@ export class PlayerManager extends EventEmitter {
   }
 
   /**
-   * Stop movie and return to YouTube
+   * Arrête le film en cours.
+   * @param {boolean} resumeYoutube  relancer la chaîne YouTube derrière. FAUX
+   *   quand on reste sur la chaîne Movies (retour bibliothèque / advisor) :
+   *   sinon la dernière chaîne repart en fond, sous l'overlay.
    */
-  stopMovie() {
+  stopMovie(resumeYoutube = true) {
     if (!this.state.isMovieMode) {
       return;
     }
@@ -433,7 +472,7 @@ export class PlayerManager extends EventEmitter {
     this.currentEntry = null;
     this.state.stopAutoSave();
 
-    if (this.youtubePlayer) {
+    if (resumeYoutube && this.youtubePlayer) {
       this.youtubePlayer.playVideo();
     }
 

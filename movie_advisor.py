@@ -119,6 +119,57 @@ Rules:
 - The three movies should not all come from the same franchise.
 - Do not invent movie titles."""
 
+
+# Variante séries : même structure, vocabulaire « TV series ».
+PROMPT_TV = """You are Series Advisor.
+Your role is to recommend exactly 3 TV series.
+The user owns a personal library and wants recommendations according to the selected criteria.
+Do not recommend series that appear in the excluded list.
+Recommendations should be diverse.
+Avoid suggesting three series that are too similar.
+For each recommendation, do a short series synopsis, with no spoiler (maximum 120 characters) in french.
+
+--------------------------------------------------
+
+Selected criteria
+
+{criteria}
+{extra}
+--------------------------------------------------
+
+TV series that must NEVER be recommended
+
+{excluded}
+
+--------------------------------------------------
+
+Return ONLY valid JSON.
+
+Schema:
+
+{{
+  "recommendations": [
+    {{
+      "title": "Series title",
+      "year": 1999,
+      "description": "Short series synopsis, no spoiler (max 120 characters, french)"
+    }}
+  ]
+}}
+
+
+Rules:
+
+- Return exactly 3 recommendations.
+- No markdown.
+- No explanations outside the JSON.
+- No comments.
+- The JSON must be valid.
+- Do not recommend excluded series.
+- Prefer critically acclaimed series.
+- The three series should not all come from the same franchise.
+- Do not invent series titles."""
+
 # Libellés envoyés au modèle (les clés viennent du front, cf. CRITERIA).
 CRITERIA_LABELS = {
     "mood": "Mood",
@@ -158,15 +209,16 @@ class Provider:
     def available(self):
         return bool(getattr(self, "api_key", None))
 
-    def recommend(self, criteria, excluded, keywords=""):
+    def recommend(self, criteria, excluded, keywords="", kind="movie"):
         """
         Retourne [{title, year, description}] (≤ 3) ou lève AdvisorError.
         Sur erreur passagère : retente ; sinon échoue (l'orchestrateur passe au
-        fournisseur suivant).
+        fournisseur suivant). `kind` = 'movie' | 'series' (choisit le prompt).
         """
         if not self.available():
             raise AdvisorError(f'{self.name}: no API key')
-        prompt = PROMPT.format(
+        template = PROMPT_TV if kind == "series" else PROMPT
+        prompt = template.format(
             criteria=_format_criteria(criteria),
             extra=_format_extra(keywords),
             excluded="\n".join(excluded) if excluded else "(none)",
@@ -299,13 +351,13 @@ class Advisor:
     def names(self):
         return [p.name for p in self.providers if p.available()]
 
-    def recommend(self, criteria, excluded, keywords=""):
+    def recommend(self, criteria, excluded, keywords="", kind="movie"):
         last = None
         for p in self.providers:
             if not p.available():
                 continue
             try:
-                recs = p.recommend(criteria, excluded, keywords)
+                recs = p.recommend(criteria, excluded, keywords, kind)
                 print(f"[Advisor] Recommandations via {p.name}")
                 return recs
             except AdvisorError as err:

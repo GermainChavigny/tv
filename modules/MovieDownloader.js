@@ -42,6 +42,8 @@ export class MovieDownloader extends EventEmitter {
     this.ignoredJobs = new Set();
     this.lastResults = [];
     this.sortIndex = 0;
+    this.mode = 'movie';   // 'movie' | 'series'
+    this.lastQuery = '';
   }
 
   init() {
@@ -58,7 +60,10 @@ export class MovieDownloader extends EventEmitter {
         <div class="ms-list"></div>
         <div class="ms-detail is-empty"></div>
       </div>
-      ${footerHtml('<button class="crt-navbtn ms-sort" type="button"></button>')}
+      ${footerHtml(
+        '<button class="crt-navbtn ms-mode" type="button"></button>' +
+        '<button class="crt-navbtn ms-sort" type="button"></button>'
+      )}
     `;
     document.body.appendChild(root);
     this.root = root;
@@ -68,6 +73,7 @@ export class MovieDownloader extends EventEmitter {
     this.messageEl = root.querySelector('.ms-message');
     this.metaEl = root.querySelector('.crt-meta');
     this.sortBtn = root.querySelector('.ms-sort');
+    this.modeBtn = root.querySelector('.ms-mode');
     this.selectedIdx = 0;
     this._shown = [];
 
@@ -76,12 +82,19 @@ export class MovieDownloader extends EventEmitter {
       this.sortIndex = (this.sortIndex + 1) % SORTS.length;
       this.renderResults();
     });
-    this._updateSortLabel();
+    // Bascule Film/Série : relance la même requête dans l'autre mode.
+    this.modeBtn.addEventListener('click', () => {
+      this.mode = this.mode === 'series' ? 'movie' : 'series';
+      if (this.lastQuery) this.search(this.lastQuery, this.mode);
+      else this._updateFooterLabels();
+    });
+    this._updateFooterLabels();
     return this;
   }
 
-  _updateSortLabel() {
+  _updateFooterLabels() {
     this.sortBtn.textContent = `[Sort: ${SORTS[this.sortIndex].label}]`;
+    this.modeBtn.textContent = this.mode === 'series' ? '[Series]' : '[Movies]';
   }
 
   open() {
@@ -95,20 +108,28 @@ export class MovieDownloader extends EventEmitter {
   }
 
   /**
-   * Lance une recherche et affiche les résultats.
+   * Lance une recherche (film ou série) et affiche les résultats.
+   * @param {string} query
+   * @param {'movie'|'series'} [mode]  bascule Film/Série (défaut : mode courant).
    */
-  async search(query) {
+  async search(query, mode) {
+    if (mode) this.mode = mode;
+    this.lastQuery = query;
     this.open();
+    this._updateFooterLabels();
     this.metaEl.textContent = '';
     this.bodyEl.style.display = 'none';
     this.messageEl.style.display = '';
-    this.messageEl.textContent = `Searching « ${query} »…`;
+    const kind = this.mode === 'series' ? 'series' : 'movie';
+    this.messageEl.textContent = `Searching « ${query} » (${kind})…`;
 
     let results;
     try {
-      results = await this.apiClient.searchMovies(query);
+      results = this.mode === 'series'
+        ? await this.apiClient.searchSeries(query)
+        : await this.apiClient.searchMovies(query);
     } catch (err) {
-      this.messageEl.textContent = 'Search error (indexer unreachable?).';
+      this.messageEl.textContent = 'Search error (indexer/TMDB unreachable?).';
       return;
     }
 
@@ -125,7 +146,7 @@ export class MovieDownloader extends EventEmitter {
 
   /** (Re)affiche la liste selon le tri courant + sélectionne le 1er résultat. */
   renderResults() {
-    this._updateSortLabel();
+    this._updateFooterLabels();
     this._shown = this._sortedResults();
     this.metaEl.textContent = `${this._shown.length} ${this._shown.length > 1 ? 'results' : 'result'}`;
     this.listEl.innerHTML = '';
@@ -134,8 +155,10 @@ export class MovieDownloader extends EventEmitter {
   }
 
   _sortedResults() {
+    // En mode série, pas de torrents : on garde l'ordre TMDB (pertinence).
+    if (this.mode === 'series') return this.lastResults.slice();
     const mode = SORTS[this.sortIndex].key;
-    const best = (m) => m.torrents[0] || {};
+    const best = (m) => (m.torrents && m.torrents[0]) || {};
     const arr = this.lastResults.slice();
     if (mode === 'seeders') arr.sort((a, b) => (best(b).seeders || 0) - (best(a).seeders || 0));
     else if (mode === 'size') arr.sort((a, b) => sizeToBytes(best(b).size) - sizeToBytes(best(a).size));
@@ -150,16 +173,21 @@ export class MovieDownloader extends EventEmitter {
     row.className = 'ms-row';
     row.dataset.idx = idx;
 
-    const best = movie.torrents[0] || {};
-    const sub = [
-      movie.year || null,
-      best.size != null ? best.size : null,
-      best.seeders != null ? `${best.seeders} seeders` : null,
-    ].filter(Boolean).map(escapeHtml).join(' · ');
+    let sub;
+    if (this.mode === 'series') {
+      sub = movie.year ? String(movie.year) : '';
+    } else {
+      const best = (movie.torrents && movie.torrents[0]) || {};
+      sub = [
+        movie.year || null,
+        best.size != null ? best.size : null,
+        best.seeders != null ? `${best.seeders} seeders` : null,
+      ].filter(Boolean).map(escapeHtml).join(' · ');
+    }
 
     row.innerHTML = `
       <div class="ms-r-title">${escapeHtml(movie.title)}</div>
-      ${sub ? `<div class="ms-r-sub">${sub}</div>` : ''}
+      ${sub ? `<div class="ms-r-sub">${escapeHtml(sub)}</div>` : ''}
     `;
     row.addEventListener('click', () => this.select(idx));
     return row;
@@ -182,8 +210,10 @@ export class MovieDownloader extends EventEmitter {
       return;
     }
     this.detailEl.classList.remove('is-empty');
-    const best = movie.torrents[0] || {};
-    const specs = [best.quality, best.size, best.seeders != null ? `${best.seeders} seeders` : null]
+    const isSeries = this.mode === 'series';
+    const best = (movie.torrents && movie.torrents[0]) || {};
+    const specs = isSeries ? '' : [best.quality, best.size,
+      best.seeders != null ? `${best.seeders} seeders` : null]
       .filter(Boolean).map(escapeHtml).join(' · ');
 
     this.detailEl.innerHTML = `
@@ -191,7 +221,7 @@ export class MovieDownloader extends EventEmitter {
       <div class="ms-d-title">${escapeHtml(movie.title)}</div>
       ${movie.year ? `<div class="ms-d-year">${escapeHtml(String(movie.year))}</div>` : ''}
       ${specs ? `<div class="ms-d-specs">${specs}</div>` : ''}
-      <button class="crt-btn ms-dl" type="button">Download</button>
+      <button class="crt-btn ${isSeries ? 'ms-add' : 'ms-dl'}" type="button">${isSeries ? 'Manage episodes' : 'Download'}</button>
       ${movie.overview ? `<div class="ms-d-overview">${escapeHtml(movie.overview)}</div>` : ''}
     `;
 
@@ -201,7 +231,12 @@ export class MovieDownloader extends EventEmitter {
       img.addEventListener('error', () => box.classList.add('no-poster'));
       img.src = movie.posterUrl;
     }
-    this.detailEl.querySelector('.ms-dl').addEventListener('click', () => this.download(movie, best));
+    if (isSeries) {
+      // Choisir une série → l'enregistrer + ouvrir la popup épisodes (app.js).
+      this.detailEl.querySelector('.ms-add').addEventListener('click', () => this.emit('add-series', movie));
+    } else {
+      this.detailEl.querySelector('.ms-dl').addEventListener('click', () => this.download(movie, best));
+    }
   }
 
   /**
@@ -252,7 +287,10 @@ export class MovieDownloader extends EventEmitter {
         if (jobs[id]) continue;
         if (this.ignoredJobs.has(id)) continue; // supprimé : pas de « Film prêt »
         this.emit('ready', id);
-        if (this.voice) this.voice.announce('Film prêt', 0.8);
+        // Pas d'annonce pour les jobs série (un pack = beaucoup d'épisodes).
+        const prev = this.knownJobs[id];
+        const isSeries = prev && (prev.type === 'episode' || prev.type === 'pack');
+        if (this.voice && !isSeries) this.voice.announce('Film prêt', 0.8);
       }
       this.knownJobs = jobs;
 

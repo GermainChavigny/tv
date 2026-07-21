@@ -11,6 +11,7 @@ import time
 
 from movie_pipeline import Library, JobWorker, atomic_write_json
 from movie_sources import Indexer, Tmdb, Subtitles, load_secrets, clean_torrent_title
+from movie_series import SeriesManager
 from movie_advisor import (
     AdvisorError, Advisor, Blacklist, Gemini, OpenAICompatible, clip_summary,
 )
@@ -98,6 +99,9 @@ def _backfill_overviews():
     if not tmdb.available():
         return
     for movie_id, entry in library.all().items():
+        # Films seulement : les séries/épisodes ont un id TMDB /tv (404 sur /movie).
+        if entry.get('type') not in (None, 'movie'):
+            continue
         if entry.get('overview') or not entry.get('tmdbId'):
             continue
         ov = tmdb.overview(entry['tmdbId'])
@@ -226,6 +230,19 @@ def delete_movie():
     for sub_name in (entry.get('subtitles') or {}).values():
         _safe_unlink(MOVIES_DIR, sub_name)
 
+    # Série : supprime aussi ses épisodes (fichiers + entrées) et ses jobs pack.
+    if entry.get('type') == 'series':
+        for child_id, child in list(library.all().items()):
+            if child.get('showId') != movie_id:
+                continue
+            if child.get('status') in ('queued', 'downloading', 'fetching-subs', 'transcoding'):
+                worker.cancel(child_id)
+            _safe_unlink(MOVIES_DIR, child.get('file'))
+            _safe_unlink(POSTERS_DIR, child.get('poster'))
+            for sub_name in (child.get('subtitles') or {}).values():
+                _safe_unlink(MOVIES_DIR, sub_name)
+            library.delete(child_id)
+
     library.delete(movie_id)
     return jsonify({"status": "deleted", "id": movie_id})
 
@@ -234,6 +251,24 @@ def _slugify(title, year=None):
     """'The Matrix', 1999 -> 'the-matrix-1999' (id + noms de fichiers)."""
     slug = re.sub(r'[^a-z0-9]+', '-', str(title).lower()).strip('-') or 'film'
     return f"{slug}-{year}" if year else slug
+
+
+# Orchestrateur séries (TMDB TV + indexeur + worker). Branche on_pack_done pour
+# le repli épisode-unique. Dépend de _slugify, donc instancié ici.
+series = SeriesManager(library, tmdb, indexer, worker, _slugify, Path(POSTERS_DIR))
+
+
+def _recheck_loop():
+    """Re-check périodique des séries en cours de diffusion (nouveaux épisodes)."""
+    while True:
+        try:
+            series.recheck_airing()
+        except Exception as err:
+            print(f"[Series] recheck échec : {err}")
+        time.sleep(12 * 3600)
+
+
+threading.Thread(target=_recheck_loop, daemon=True).start()
 
 
 # --- MOVIE ADVISOR : RECOMMANDATIONS IA ---
@@ -254,12 +289,13 @@ def advisor_recommend():
     body = request.json or {}
     criteria = body.get('criteria') or {}
     keywords = body.get('keywords') or ''
+    kind = 'series' if body.get('kind') == 'series' else 'movie'
 
     owned = [e.get('title') for e in library.all().values() if e.get('title')]
     excluded = sorted(set(blacklist.titles()) | set(owned))
 
     try:
-        recs = advisor.recommend(criteria, excluded, keywords)
+        recs = advisor.recommend(criteria, excluded, keywords, kind)
     except AdvisorError as err:
         # Le message vient de Google (quota, clé invalide…) : il est montrable
         # tel quel et évite de faire deviner la cause depuis l'écran.
@@ -272,16 +308,20 @@ def advisor_recommend():
     for rec in recs:
         title = rec.get('title')
         year = rec.get('year')
-        # Match TMDB en fr-FR (le titre de Gemini est français → bon film),
-        # puis titre anglais par id pour la recherche torrent (plus de résultats
-        # que le titre traduit). Repli sur original/affiché si indisponible.
-        meta = tmdb.search(title, year) if tmdb.available() else None
-        english = tmdb.english_title(meta['tmdbId']) if meta else None
+        # Match TMDB en fr-FR (titre de Gemini en français → bon film/série),
+        # puis titre anglais par id pour la recherche torrent. Endpoints TV si série.
+        if kind == 'series':
+            meta = tmdb.search_tv(title, year) if tmdb.available() else None
+            english = tmdb.english_tv_title(meta['tmdbId']) if meta else None
+        else:
+            meta = tmdb.search(title, year) if tmdb.available() else None
+            english = tmdb.english_title(meta['tmdbId']) if meta else None
         query = english or (meta or {}).get('originalTitle') or title
         out.append({
             "id": _slugify(title, year),
-            "title": title,   # affiché (français, de Gemini)
+            "title": title,   # affiché (français, de l'IA)
             "query": query,   # recherche torrent (anglais)
+            "kind": kind,
             "year": year,
             "posterUrl": (meta or {}).get('posterUrl'),
             "summary": clip_summary(rec.get('description')),
@@ -414,6 +454,16 @@ def movies_status():
     return jsonify(worker.active_jobs())
 
 
+@app.route('/movies/disk', methods=['GET'])
+def movies_disk():
+    """Espace du volume des films — affiché dans l'en-tête de la bibliothèque."""
+    st = os.statvfs(MOVIES_DIR)
+    return jsonify({
+        "freeBytes": st.f_bavail * st.f_frsize,   # dispo pour un utilisateur normal
+        "totalBytes": st.f_blocks * st.f_frsize,
+    })
+
+
 @app.route('/movies/cancel', methods=['POST'])
 def movies_cancel():
     """Annule un job en attente ou en cours. Body : {"id": "<slug>"}"""
@@ -423,6 +473,81 @@ def movies_cancel():
         return jsonify({"error": "Unknown movie id"}), 404
     worker.cancel(movie_id)
     return jsonify({"status": "cancelled", "id": movie_id})
+
+
+# --- SÉRIES ---
+
+@app.route('/series/search', methods=['POST'])
+def series_search():
+    """Recherche de séries via TMDB TV. Body : {"query": "..."}."""
+    query = (request.json or {}).get('query', '').strip()
+    if not query:
+        return jsonify({"error": "query vide"}), 400
+    if not tmdb.available():
+        return jsonify({"error": "TMDB non configuré (tv_data/secrets.json)"}), 503
+    return jsonify(tmdb.search_tv_all(query))
+
+
+@app.route('/series/add', methods=['POST'])
+def series_add():
+    """Enregistre une série au catalogue. Body : {"tmdbId": 1396}."""
+    tmdb_id = (request.json or {}).get('tmdbId')
+    if not tmdb_id:
+        return jsonify({"error": "tmdbId requis"}), 400
+    show = series.add_show(tmdb_id)
+    if not show:
+        return jsonify({"error": "Série introuvable sur TMDB"}), 404
+    return jsonify({"status": "ok", "id": show['id'], "show": show})
+
+
+@app.route('/series/<show_id>', methods=['GET'])
+def series_get(show_id):
+    """Entrée série du catalogue (structure des saisons)."""
+    show = library.get(show_id)
+    if not show or show.get('type') != 'series':
+        return jsonify({"error": "Série inconnue"}), 404
+    return jsonify(show)
+
+
+@app.route('/series/<show_id>/season/<int:season>', methods=['GET'])
+def series_season(show_id, season):
+    """Épisodes d'une saison + état local (missing/downloading/ready/error)."""
+    view = series.season_view(show_id, season)
+    if view is None:
+        return jsonify({"error": "Série inconnue"}), 404
+    return jsonify(view)
+
+
+@app.route('/series/download', methods=['POST'])
+def series_download():
+    """
+    Lance le téléchargement d'un épisode / d'une saison / de la série.
+    Body : {"showId": "...", "scope": "episode|season|series", "season"?, "episode"?}.
+    Les recherches d'indexeur peuvent être nombreuses (saison/série) → exécutées
+    en arrière-plan ; le front suit l'état via /series/<id>/season/<n>.
+    """
+    data = request.json or {}
+    show_id = data.get('showId')
+    scope = data.get('scope')
+    if not show_id or scope not in ('episode', 'season', 'series'):
+        return jsonify({"error": "showId + scope (episode|season|series) requis"}), 400
+    if not library.get(show_id):
+        return jsonify({"error": "Série inconnue"}), 404
+    if not indexer.available():
+        return jsonify({"error": "Aucun indexeur configuré (tv_data/secrets.json)"}), 503
+    threading.Thread(
+        target=series.download_async,
+        args=(show_id, scope, data.get('season'), data.get('episode')),
+        daemon=True,
+    ).start()
+    return jsonify({"status": "queued"})
+
+
+@app.route('/series/recheck', methods=['POST'])
+def series_recheck():
+    """Force un re-check des séries en cours (arrière-plan)."""
+    threading.Thread(target=series.recheck_airing, daemon=True).start()
+    return jsonify({"status": "ok"})
 
 
 # --- SERVIR UN FICHIER VIDÉO ---
@@ -460,6 +585,9 @@ def get_poster(movie_id):
 
     entry = library.get(movie_id)
     poster_name = (entry or {}).get('poster') if entry else None
+    # Épisode sans affiche propre → retombe sur l'affiche de sa série.
+    if entry and not poster_name and entry.get('type') == 'episode' and entry.get('showId'):
+        poster_name = (library.get(entry['showId']) or {}).get('poster')
     poster_path = Path(POSTERS_DIR) / poster_name if poster_name else None
 
     if not poster_path or not poster_path.exists():
