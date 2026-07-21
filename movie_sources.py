@@ -551,6 +551,12 @@ def clean_torrent_title(raw):
 # Sous-titres externes (OpenSubtitles) — SRT converti en WebVTT via ffmpeg
 # ---------------------------------------------------------------------------
 
+def _venv_bin(name):
+    """Chemin d'un exécutable du venv du projet, ou None s'il n'y est pas."""
+    path = Path(__file__).resolve().parent / "venv" / "bin" / name
+    return str(path) if os.access(path, os.X_OK) else None
+
+
 class Subtitles:
     """
     Récupère les meilleurs sous-titres fr/en depuis OpenSubtitles (clé API +
@@ -566,8 +572,10 @@ class Subtitles:
         self.password = password or ""
         self.ffmpeg = ffmpeg
         # Resynchro auto (best-effort) : activée seulement si le binaire est là.
-        # Non installé par défaut (ffsubsync tire numpy/scipy) ; voir README.
-        self.ffsubsync = shutil.which("ffsubsync")
+        # Il vit dans le venv du projet, alors que .xinitrc lance l'API avec le
+        # python système : on le cherche donc aussi à côté des sources (son
+        # shebang pointe le python du venv, il s'exécute donc de façon autonome).
+        self.ffsubsync = shutil.which("ffsubsync") or _venv_bin("ffsubsync")
         self._token = None
         self._token_ts = 0
 

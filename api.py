@@ -454,6 +454,16 @@ def movies_status():
     return jsonify(worker.active_jobs())
 
 
+@app.route('/movies/disk', methods=['GET'])
+def movies_disk():
+    """Espace du volume des films — affiché dans l'en-tête de la bibliothèque."""
+    st = os.statvfs(MOVIES_DIR)
+    return jsonify({
+        "freeBytes": st.f_bavail * st.f_frsize,   # dispo pour un utilisateur normal
+        "totalBytes": st.f_blocks * st.f_frsize,
+    })
+
+
 @app.route('/movies/cancel', methods=['POST'])
 def movies_cancel():
     """Annule un job en attente ou en cours. Body : {"id": "<slug>"}"""

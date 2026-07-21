@@ -38,6 +38,7 @@ const config = {
       moviesStatus: '/movies/status',
       moviesCancel: '/movies/cancel',
       moviesDelete: '/movies/delete',
+      moviesDisk: '/movies/disk',
       // Movie Advisor (recommandations IA + blacklist « Forget »)
       advisorRecommend: '/advisor/recommend',
       advisorForget: '/advisor/forget',

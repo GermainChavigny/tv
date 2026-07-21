@@ -643,6 +643,16 @@ body {
 }
 
 /* Onglets Movies / Series (masqués si une seule catégorie existe). */
+/* Espace disque restant : centré dans l'espace laissé entre « LIBRARY » et
+   l'horloge (flex:1 → il absorbe toute la place disponible). */
+#movie-browser .crt-meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--crt-dim);
+}
+
 #movie-browser .mb-tabs {
   flex: 0 0 auto;
   display: flex;
@@ -1310,35 +1320,28 @@ body {
   color: var(--crt-f2);
 }
 
-/* Champ libre ajouté au prompt : centré verticalement dans l'espace entre la
-   citation et le bas de la colonne (margin auto), gros bouton lisible. */
-#movie-advisor .adv-keywords {
+/* Type + mots-clés : rangée alignée sur les colonnes de la grille de critères
+   (mêmes largeurs, même gouttière), hauteur libre plutôt que 1fr. */
+#movie-advisor .adv-top {
   flex: 0 0 auto;
-  margin: auto 0;
-  width: 100%;
-  padding: 3.3vh 0.9vw;
-  font-size: 2.76vw;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 1vw;
+}
+
+#movie-advisor .adv-top .adv-crit { padding: 1.4vh 1vw; }
+
+/* Le champ libre peut être long : on le laisse tenir sur deux lignes, contrairement
+   aux valeurs de critères (une ligne + ellipse). */
+#movie-advisor .adv-keywords .adv-crit-val {
   text-transform: none;
-  color: var(--crt-dim);
+  white-space: normal;
+  line-height: 1.1;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
-  overflow: hidden;
   word-break: break-word;
-}
-
-/* Renseigné : contour + texte ambre pour signaler qu'il agit sur la recherche. */
-#movie-advisor .adv-keywords.is-set {
-  color: var(--crt-accent);
-  border-color: var(--crt-accent);
-}
-
-#movie-advisor .adv-keywords:hover {
-  background-color: var(--crt-accent);
-  color: var(--crt-accent-ink);
-  border-color: var(--crt-accent);
-  text-shadow: none;
 }
 
 #movie-advisor .adv-col {

@@ -47,6 +47,11 @@ export class MovieBrowser extends EventEmitter {
     this.filterIndex = DEFAULT_FILTER;
     this.tab = 'movies'; // onglet actif : 'movies' | 'series'
     this._lastJobIds = '';
+    this.disk = null;    // { freeBytes, totalBytes } — en-tête (espace restant)
+
+    // L'espace libre bouge à chaque téléchargement ou suppression : on le
+    // rafraîchit à chaque rechargement du catalogue plutôt qu'en boucle.
+    this.library.on('loaded', () => this._refreshDisk());
   }
 
   /** Construit la structure DOM une seule fois et l'attache au body. */
@@ -116,7 +121,7 @@ export class MovieBrowser extends EventEmitter {
 
   /** Affiche l'overlay et (re)construit la liste depuis le catalogue courant. */
   async open() {
-    await this.library.load();
+    await this.library.load(); // → 'loaded' → _refreshDisk()
     this.render();
     this.isOpen = true;
     this.root.classList.add('open');
@@ -130,6 +135,21 @@ export class MovieBrowser extends EventEmitter {
 
   toggle() {
     return this.isOpen ? this.close() : this.open();
+  }
+
+  /**
+   * Espace disque restant, affiché au centre de l'en-tête : c'est ce qui décide
+   * si l'on peut encore télécharger, bien plus utile que le nombre d'éléments.
+   */
+  _refreshDisk() {
+    this.library.apiClient.diskInfo()
+      .then((d) => { this.disk = d; this._renderDisk(); })
+      .catch(() => {}); // pas d'info disque → en-tête vide, rien de bloquant
+  }
+
+  _renderDisk() {
+    const free = this.disk && this.disk.freeBytes;
+    this.metaEl.textContent = free ? `${(free / 1e9).toFixed(1)} GB free` : '';
   }
 
   /** Barre d'onglets Movies/Series — affichée seulement si les DEUX existent. */
@@ -153,8 +173,7 @@ export class MovieBrowser extends EventEmitter {
     const items = this._visibleItems();
     this._updateFooterLabels();
     this.listEl.innerHTML = '';
-    const noun = this.tab === 'series' ? 'series' : (items.length > 1 ? 'movies' : 'movie');
-    this.metaEl.textContent = items.length ? `${items.length} ${noun}` : '';
+    this._renderDisk();
     this.emptyMsg.style.display = items.length ? 'none' : 'block';
 
     for (const entry of items) {

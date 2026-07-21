@@ -64,6 +64,11 @@ export class ApiClient {
     return this.request(this.endpoints.library);
   }
 
+  /** Espace disque du volume des films : { freeBytes, totalBytes }. */
+  async diskInfo() {
+    return this.request(this.endpoints.moviesDisk);
+  }
+
   /**
    * Patch one library entry (playback progress, watched flag, ...)
    */

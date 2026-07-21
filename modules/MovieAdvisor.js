@@ -103,10 +103,20 @@ export class MovieAdvisor extends EventEmitter {
           <div class="adv-name">Michael Harper</div>
           <div class="adv-role">Movie Advisor</div>
           <div class="adv-quote"></div>
-          <button class="crt-btn adv-kind" type="button"></button>
-          <button class="crt-btn adv-keywords" type="button"></button>
         </div>
         <div class="adv-col">
+          <!-- Type et mots-clés : mêmes colonnes et même habillage que les
+               8 sélecteurs de critères, dont ils sont l'exact équivalent. -->
+          <div class="adv-top">
+            <button class="crt-btn adv-crit adv-kind" type="button">
+              <span class="adv-crit-name">Type</span>
+              <span class="adv-crit-val"></span>
+            </button>
+            <button class="crt-btn adv-crit adv-keywords" type="button">
+              <span class="adv-crit-name">Keywords</span>
+              <span class="adv-crit-val"></span>
+            </button>
+          </div>
           <div class="adv-grid"></div>
           <div class="adv-actions">
             <button class="crt-btn adv-surprise" type="button">Surprise</button>
@@ -188,8 +198,8 @@ export class MovieAdvisor extends EventEmitter {
   /** Reflète le champ libre sur son bouton (valeur ou invite). */
   _renderKeywords() {
     const kw = this.keywords.trim();
-    this.keywordsBtn.textContent = kw ? kw : '+ KEYWORDS';
-    this.keywordsBtn.classList.toggle('is-set', !!kw);
+    // « Any » quand vide, comme les critères : le bouton se lit de la même façon.
+    this.keywordsBtn.querySelector('.adv-crit-val').textContent = kw || 'Any';
   }
 
   /** Reçoit le texte saisi au clavier virtuel (appelé par app.js). */
@@ -200,7 +210,7 @@ export class MovieAdvisor extends EventEmitter {
 
   /** Reflète le type demandé (film / série) sur son bouton. */
   _renderKind() {
-    this.kindBtn.textContent = this.kind === 'series' ? '▸ Series' : '▸ Movies';
+    this.kindBtn.querySelector('.adv-crit-val').textContent = this.kind === 'series' ? 'Series' : 'Movies';
   }
 
   open() {

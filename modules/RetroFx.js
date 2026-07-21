@@ -15,8 +15,9 @@
 // garder une cascade brève et un son non envahissant.
 const REVEAL_SELECTOR = [
   '.crt-header', '.mb-row', '.ms-row', '.mc-row', '.mc-seek-wrap',
+  // .adv-crit couvre aussi Type et Keywords (mêmes boutons que les critères).
   '.vk-row', '.adv-critic', '.adv-crit', '.adv-actions .crt-btn',
-  '.adv-keywords', '.mb-detail', '.ms-detail', '.crt-footer',
+  '.mb-detail', '.ms-detail', '.crt-footer',
 ].join(',');
 const MAX_ITEMS = 26;
 const STEP_MS = 32;
