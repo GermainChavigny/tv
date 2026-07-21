@@ -504,6 +504,7 @@ function attachMovieHandlers() {
       title: 'Movie Advisor',
       prompt: 'Extra keywords (actor, theme…):',
       submitLabel: 'OK',
+      allowEmpty: true, // valider à vide = effacer les mots-clés
     });
   });
 

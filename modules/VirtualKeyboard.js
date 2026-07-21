@@ -30,6 +30,7 @@ export class VirtualKeyboard extends EventEmitter {
     this.input = '';
     this.isOpen = false;
     this.purpose = 'search'; // qui a ouvert le clavier (route le 'submit')
+    this.allowEmpty = false; // valider à vide (effacer les mots-clés advisor)
     this.searchKind = 'movie'; // 'movie' | 'series' (recherche film ou série)
   }
 
@@ -87,13 +88,16 @@ export class VirtualKeyboard extends EventEmitter {
   /**
    * Ouvre le clavier.
    * @param {string} initial  texte pré-rempli
-   * @param {object} opts  { purpose, title, prompt, submitLabel } — libellés
-   *   personnalisables. Les défauts correspondent à la recherche torrent, pour
-   *   que le flux existant (goSearch / résultats) reste inchangé.
+   * @param {object} opts  { purpose, title, prompt, submitLabel, allowEmpty } —
+   *   libellés personnalisables. Les défauts correspondent à la recherche torrent,
+   *   pour que le flux existant (goSearch / résultats) reste inchangé. `allowEmpty`
+   *   autorise la validation d'un champ vide (une recherche vide n'a aucun sens,
+   *   mais effacer les mots-clés de l'advisor, si).
    */
   open(initial = '', opts = {}) {
     this.input = initial;
     this.purpose = opts.purpose || 'search';
+    this.allowEmpty = !!opts.allowEmpty;
     this.titleEl.textContent = opts.title || 'Search';
     this.promptEl.textContent = opts.prompt || 'Search for:';
     this.submitEl.textContent = opts.submitLabel || 'Search';
@@ -140,7 +144,7 @@ export class VirtualKeyboard extends EventEmitter {
         this.emit('close');
         return;
       case 'submit':
-        if (this.input.trim()) {
+        if (this.allowEmpty || this.input.trim()) {
           this.emit('submit', this.input.trim());
         }
         return;

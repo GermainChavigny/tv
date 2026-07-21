@@ -54,6 +54,7 @@ export class SeriesPopup extends EventEmitter {
         </div>
         <div class="sp-detail is-empty"></div>
       </div>
+      <div class="sp-notice"></div>
       <div class="sp-actions">
         <button class="crt-btn sp-dl-season" type="button">Download season</button>
         <button class="crt-btn sp-dl-series" type="button">Download series</button>
@@ -68,6 +69,7 @@ export class SeriesPopup extends EventEmitter {
     this.seasonsEl = root.querySelector('.sp-seasons');
     this.episodesEl = root.querySelector('.sp-episodes');
     this.detailEl = root.querySelector('.sp-detail');
+    this.noticeEl = root.querySelector('.sp-notice');
 
     wireFooterNav(root, this);
     root.querySelector('.sp-back').addEventListener('click', () => this.close());
@@ -95,6 +97,7 @@ export class SeriesPopup extends EventEmitter {
     this.selectedEp = null;
     this._requested.clear();
     this.titleEl.textContent = show.title || show.id;
+    this._setNotice(null);
     this._renderSeasons();
     const first = (show.seasons && show.seasons[0]) ? show.seasons[0].seasonNumber : 1;
     this._selectSeason(first);
@@ -137,6 +140,7 @@ export class SeriesPopup extends EventEmitter {
       return;
     }
     if (!this.isOpen || view.season !== this.season) return; // saison changée entre-temps
+    this._setNotice(view.notice);
     this.episodes = view.episodes || [];
     this._renderEpisodes();
   }
@@ -254,8 +258,20 @@ export class SeriesPopup extends EventEmitter {
   }
 
   _download(scope, season, episode) {
+    // Retour immédiat : la recherche de sources tourne côté serveur et peut ne
+    // rien trouver — sans ce message, un clic sans effet reste inexpliqué.
+    this._setNotice('Searching sources…');
     this.apiClient.downloadSeries({ showId: this.show.id, scope, season, episode })
-      .catch((err) => console.warn('Series download failed:', err));
+      .catch((err) => {
+        console.warn('Series download failed:', err);
+        this._setNotice(String((err && err.message) || err));
+      });
+  }
+
+  /** Bandeau d'information sous la liste (recherche, échec, aucune source). */
+  _setNotice(text) {
+    this.noticeEl.textContent = text || '';
+    this.root.classList.toggle('has-notice', !!text);
   }
 
   _startPolling() {

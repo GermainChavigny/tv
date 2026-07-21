@@ -33,6 +33,9 @@ class SeriesManager:
         self.worker = worker
         self.slugify = slugify
         self.posters_dir = posters_dir
+        # Dernière issue de recherche PAR SÉRIE, remontée à la popup : sans ça,
+        # un indexeur muet (ou éteint) se traduisait par « rien ne se passe ».
+        self.notices = {}
         # Repli épisode-unique en fin de pack saison/série.
         worker.on_pack_done = self._on_pack_done
 
@@ -181,6 +184,36 @@ class SeriesManager:
 
         return {"queued": queued, "errors": errors}
 
+    def download_async(self, show_id, scope, season=None, episode=None):
+        """
+        `download` exécuté en thread (les recherches d'indexeur sont longues),
+        en mémorisant l'issue dans `notices` pour que la popup l'affiche.
+        """
+        self._notice(show_id, "Searching sources…")
+        try:
+            res = self.download(show_id, scope, season, episode)
+        except Exception as err:                       # jamais silencieux
+            print(f"[Series] Téléchargement {show_id} en échec : {err}")
+            self._notice(show_id, f"Search failed: {err}")
+            return
+        if res.get('error'):
+            self._notice(show_id, res['error'])
+        elif res.get('queued'):
+            self._notice(show_id, None)                # la progression parle d'elle-même
+        else:
+            errors = res.get('errors') or []
+            self._notice(show_id, errors[0] if errors else 'No source found')
+
+    def _notice(self, show_id, text):
+        self.notices[show_id] = {"at": time.time(), "text": text}
+
+    def notice(self, show_id):
+        """Message courant d'une série (périmé au bout d'une minute)."""
+        n = self.notices.get(show_id)
+        if not n or time.time() - n['at'] > 60:
+            return None
+        return n['text']
+
     def _on_pack_done(self, pack, fulfilled, missing):
         """Fin d'un pack saison/série : repli épisode-unique sur les manquants."""
         if not pack.get('fallback') or not missing:
@@ -250,7 +283,7 @@ class SeriesManager:
                 "currentTime": round(current, 1), "duration": round(duration, 1),
                 "watched": watched,
             })
-        return {"season": season, "episodes": out}
+        return {"season": season, "episodes": out, "notice": self.notice(show_id)}
 
     def recheck_airing(self):
         """Re-fetch TMDB pour les séries en cours de diffusion (nouveaux épisodes)."""

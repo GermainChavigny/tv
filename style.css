@@ -581,6 +581,10 @@ body {
   padding: 1.2vh 1.11vw 1.2vh 1.4vw;
   gap: 0.6vh 0;
 }
+/* Les enfants en width:100% (vignette, barre, bouton) portent une bordure : en
+   content-box elle s'ajoutait aux 100 % et faisait déborder le volet de quelques
+   pixels — d'où une mini barre de défilement horizontale. */
+#series-popup .sp-detail * { box-sizing: border-box; }
 #series-popup .sp-detail > * { flex: 0 0 auto; }
 #series-popup .sp-detail.is-empty { justify-content: center; text-align: center; color: var(--crt-dim); }
 #series-popup .sp-d-still {
@@ -617,6 +621,17 @@ body {
 }
 
 /* Actions du bas (télécharger saison / série). */
+/* Bandeau d'issue de recherche (aucune source, indexeur injoignable…) : masqué
+   tant qu'il n'y a rien à dire, pour ne pas manger de hauteur. */
+#series-popup .sp-notice {
+  display: none;
+  flex: 0 0 auto;
+  padding: 1vh var(--crt-safe-x) 0;
+  font-size: 2.2vw;
+  color: var(--crt-accent);
+}
+#series-popup.has-notice .sp-notice { display: block; }
+
 #series-popup .sp-actions {
   flex: 0 0 auto;
   display: flex;
@@ -811,7 +826,12 @@ body {
   margin-top: 1.74vh;
   font-size: 2.65vw;
   color: var(--crt-text);
+  /* Un message d'erreur de torrent est long et sans espaces : il doit se couper
+     plutôt que déborder du volet. */
+  word-break: break-word;
 }
+
+#movie-browser .mb-d-prog--error { color: #e07a7a; }
 
 /* display:block indispensable : .crt-bar est un <span> ; inline, sa hauteur
    serait ignorée (dans les lignes de la liste c'est un grid-item, déjà blockifié). */

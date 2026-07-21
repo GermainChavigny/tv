@@ -134,6 +134,11 @@ def _human_size(num_bytes):
     return f"{size:.1f} Po"
 
 
+def _redact(text, secret):
+    """Remplace un secret par « *** » dans un texte destiné aux logs."""
+    return text.replace(secret, "***") if secret else text
+
+
 class Indexer:
     """
     Recherche de torrents de films via un indexeur Torznab (Jackett), qui agrège
@@ -162,7 +167,10 @@ class Indexer:
                 else:
                     print(f"[Indexer] type inconnu : {kind}")
             except Exception as err:  # un indexeur HS ne casse pas la recherche
-                print(f"[Indexer] {cfg.get('name')} en échec : {err}")
+                # requests met l'URL COMPLÈTE dans ses exceptions réseau, apiKey
+                # comprise : on la masque avant d'écrire quoi que ce soit.
+                print(f"[Indexer] {cfg.get('name')} en échec : "
+                      f"{_redact(str(err), cfg.get('apiKey'))}")
         return results
 
     def _search_torznab(self, cfg, query, limit, cat=None):

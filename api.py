@@ -536,7 +536,7 @@ def series_download():
     if not indexer.available():
         return jsonify({"error": "Aucun indexeur configuré (tv_data/secrets.json)"}), 503
     threading.Thread(
-        target=series.download,
+        target=series.download_async,
         args=(show_id, scope, data.get('season'), data.get('episode')),
         daemon=True,
     ).start()

@@ -113,6 +113,9 @@ export class MovieBrowser extends EventEmitter {
   }
 
   _updateFooterLabels() {
+    // Le filtre vu/pas-vu porte sur des films : sans objet dans l'onglet Series
+    // (une série n'est ni vue ni non vue), où il n'a d'ailleurs aucun effet.
+    this.filterBtn.style.display = this.tab === 'series' ? 'none' : '';
     this.sortBtn.textContent = `[Sort: ${SORTS[this.sortIndex].label}]`;
     // Sans le préfixe « Show: » : les valeurs se suffisent, et le pied de page
     // n'a plus la place depuis l'ajout du 3ᵉ raccourci [Advisor].
@@ -296,17 +299,19 @@ export class MovieBrowser extends EventEmitter {
     if (entry.type === 'series') return this.renderSeriesDetail(entry);
 
     const ready = this.library.isReady(entry);
-    const ratio = ready ? this.library.progressRatio(entry) : statusInfo(entry).ratio;
-    // Prêt → « temps courant / durée » ; sinon → libellé d'état.
+    const st = statusInfo(entry);
+    const ratio = ready ? this.library.progressRatio(entry) : st.ratio;
+    // Prêt → « temps courant / durée » ; sinon → libellé d'état (message complet
+    // pour une erreur : c'est ici, et pas dans la liste, qu'on a la place).
     const progLine = ready
       ? (entry.duration ? `${formatTime(entry.currentTime || 0)} / ${formatTime(entry.duration)}` : '')
-      : statusInfo(entry).label;
+      : (st.full || st.label);
 
     this.detailEl.innerHTML = `
       <div class="mb-poster"><img draggable="false" alt="" /></div>
       <div class="mb-d-title">${escapeHtml(entry.title || entry.id)}</div>
       ${entry.year ? `<div class="mb-d-year">${escapeHtml(String(entry.year))}</div>` : ''}
-      <div class="mb-d-prog">${escapeHtml(progLine)}
+      <div class="mb-d-prog${entry.status === 'error' ? ' mb-d-prog--error' : ''}">${escapeHtml(progLine)}
         ${barHtml(ratio, ready ? '' : barVariant(entry))}
       </div>
       <div class="mb-d-actions">
@@ -433,7 +438,9 @@ function statusInfo(entry) {
     case 'transcoding':
       return { label: `Conv. ${Math.round((p.transcode || 0) * 100)}%`, ratio: p.transcode || 0 };
     case 'error':
-      return { label: `Error: ${entry.error || ''}`, ratio: 0 };
+      // `label` va dans la LISTE (une ligne étroite) : le message d'erreur d'un
+      // torrent est long, il n'a sa place que dans le volet d'info → `full`.
+      return { label: 'Error', full: entry.error ? `Error: ${entry.error}` : 'Error', ratio: 0 };
     default:
       return { label: '', ratio: 0 };
   }
