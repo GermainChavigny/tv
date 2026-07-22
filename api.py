@@ -6,8 +6,11 @@ from pathlib import Path
 import requests
 
 import re
+import socket
+import subprocess
 import threading
 import time
+from urllib.parse import urlparse
 
 from movie_pipeline import Library, JobWorker, atomic_write_json
 from movie_sources import Indexer, Tmdb, Subtitles, load_secrets, clean_torrent_title
@@ -59,6 +62,75 @@ library = Library(DATA_DIR, POSTERS_DIR)
 secrets = load_secrets(DATA_DIR)
 indexer = Indexer(secrets.get('indexers'))
 tmdb = Tmdb(secrets.get('tmdb', {}).get('apiKey'))
+
+
+# --- Filet de secours Jackett -------------------------------------------------
+# Le service systemd (jackett.service, Restart=always) relance Jackett sur crash,
+# mais il peut y avoir une fenêtre où il ne répond pas. Avant chaque recherche,
+# on vérifie le port ; s'il est fermé, on demande le (re)démarrage du service et
+# on attend brièvement qu'il réponde — sinon la recherche renverrait 0 résultat
+# instantané (le symptôme exact rencontré).
+
+def _indexer_host_port():
+    """(host, port) du 1er indexeur torznab local, défaut 127.0.0.1:9117."""
+    for cfg in (secrets.get('indexers') or []):
+        if cfg.get('type') == 'torznab' and cfg.get('url'):
+            u = urlparse(cfg['url'])
+            return (u.hostname or '127.0.0.1', u.port or 9117)
+    return ('127.0.0.1', 9117)
+
+
+_JACKETT_HOST, _JACKETT_PORT = _indexer_host_port()
+_jackett_lock = threading.Lock()
+
+
+def _port_open(host, port, timeout=1.5):
+    try:
+        with socket.create_connection((host, port), timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _kick_jackett():
+    """Demande le démarrage de Jackett : service systemd, repli sur le launcher."""
+    env = dict(os.environ)
+    env.setdefault('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}')
+    try:
+        r = subprocess.run(['systemctl', '--user', 'start', 'jackett.service'],
+                           capture_output=True, timeout=10, env=env)
+        if r.returncode == 0:
+            return
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # Repli si systemd --user indisponible : lancer directement le launcher.
+    try:
+        subprocess.Popen(['/home/tv/Jackett/jackett_launcher.sh'],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         stdin=subprocess.DEVNULL, start_new_session=True)
+    except OSError as err:
+        print(f"[Jackett] relance impossible : {err}")
+
+
+def ensure_indexer(wait=12):
+    """Vrai si l'indexeur répond (après relance éventuelle). Rapide s'il est up."""
+    if not indexer.available():
+        return False
+    if _port_open(_JACKETT_HOST, _JACKETT_PORT):
+        return True
+    with _jackett_lock:  # une seule relance à la fois (recherches concurrentes)
+        if _port_open(_JACKETT_HOST, _JACKETT_PORT):
+            return True
+        print(f"[Jackett] {_JACKETT_HOST}:{_JACKETT_PORT} injoignable → relance", flush=True)
+        _kick_jackett()
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            time.sleep(1)
+            if _port_open(_JACKETT_HOST, _JACKETT_PORT):
+                print("[Jackett] de nouveau en ligne", flush=True)
+                return True
+        print("[Jackett] toujours injoignable après relance", flush=True)
+        return False
 _os = secrets.get('opensubtitles', {})
 subtitles = Subtitles(_os.get('apiKey'), _os.get('username'), _os.get('password'))
 
@@ -256,6 +328,8 @@ def _slugify(title, year=None):
 # Orchestrateur séries (TMDB TV + indexeur + worker). Branche on_pack_done pour
 # le repli épisode-unique. Dépend de _slugify, donc instancié ici.
 series = SeriesManager(library, tmdb, indexer, worker, _slugify, Path(POSTERS_DIR))
+# Même filet Jackett pour les téléchargements de séries (recherches en tâche de fond).
+series.ensure_indexer = ensure_indexer
 
 
 def _recheck_loop():
@@ -364,6 +438,7 @@ def movies_search():
         return jsonify({"error": "query vide"}), 400
     if not indexer.available():
         return jsonify({"error": "Aucun indexeur configuré (tv_data/secrets.json)"}), 503
+    ensure_indexer()  # relance Jackett s'il est tombé, avant d'interroger
 
     found = indexer.search(query)
 

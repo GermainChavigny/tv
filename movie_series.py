@@ -33,6 +33,8 @@ class SeriesManager:
         self.worker = worker
         self.slugify = slugify
         self.posters_dir = posters_dir
+        # Injecté par api.py : (re)démarre Jackett s'il ne répond pas. Optionnel.
+        self.ensure_indexer = None
         # Dernière issue de recherche PAR SÉRIE, remontée à la popup : sans ça,
         # un indexeur muet (ou éteint) se traduisait par « rien ne se passe ».
         self.notices = {}
@@ -141,6 +143,8 @@ class SeriesManager:
         show = self.library.get(show_id)
         if not show or show.get('type') != 'series':
             return {"error": "Série inconnue"}
+        if self.ensure_indexer:
+            self.ensure_indexer()  # relance Jackett s'il est tombé
         eng = self._eng_title(show)
         queued, errors = [], []
 
