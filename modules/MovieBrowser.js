@@ -337,11 +337,17 @@ export class MovieBrowser extends EventEmitter {
     const owned = this.library.showOwnedCount(entry.id);
     const total = this.library.showTotalEpisodes(entry);
     const airing = entry.tmdbStatus === 'Returning Series' || entry.tmdbStatus === 'In Production';
-    // Reprise : dernier épisode lancé (reprend à son currentTime).
+    // Reprise : dernier épisode lancé. S'il est déjà vu, on enchaîne sur
+    // l'épisode suivant (s'il existe) plutôt que de le relancer.
     const last = this.library.lastPlayedEpisode(entry.id);
+    let target = last, verb = 'Resume';
+    if (last && this.library.isWatched(last)) {
+      const next = this.library.nextReadyEpisode(entry.id, last.season, last.episode);
+      if (next) { target = next; verb = 'Next'; }
+    }
     const pad = (n) => String(n).padStart(2, '0');
-    const resumeBtn = last
-      ? `<button class="crt-btn mb-resume" type="button">▶ Resume S${pad(last.season)}E${pad(last.episode)}</button>`
+    const resumeBtn = target
+      ? `<button class="crt-btn mb-resume" type="button">▶ ${verb} S${pad(target.season)}E${pad(target.episode)}</button>`
       : '';
 
     this.detailEl.innerHTML = `
@@ -363,9 +369,9 @@ export class MovieBrowser extends EventEmitter {
     img.addEventListener('error', () => posterBox.classList.add('no-poster'));
     img.src = this.posterUrl(entry);
 
-    if (last) {
+    if (target) {
       this.detailEl.querySelector('.mb-resume').addEventListener('click', () =>
-        this.emit('play-episode', { showId: entry.id, season: last.season, episode: last.episode }));
+        this.emit('play-episode', { showId: entry.id, season: target.season, episode: target.episode }));
     }
     this.detailEl.querySelector('.mb-episodes')
       .addEventListener('click', () => this.emit('open-series', entry));

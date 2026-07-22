@@ -90,15 +90,21 @@ export class SeriesPopup extends EventEmitter {
   }
 
   /** Ouvre la popup sur une série (entrée library type 'series'). */
-  open(show) {
+  open(show, { season = null, episode = null } = {}) {
     this.show = show;
-    this.selectedEp = null;
+    // Pré-sélection (reprise) : saison + épisode où l'on s'est arrêté. À défaut,
+    // première saison, premier épisode.
+    this.selectedEp = episode;
+    this._scrollToSelected = episode != null; // amener l'épisode repris dans la vue
     this._requested.clear();
     this.titleEl.textContent = show.title || show.id;
     this._setNotice(null);
     this._renderSeasons();
-    const first = (show.seasons && show.seasons[0]) ? show.seasons[0].seasonNumber : 1;
-    this._selectSeason(first);
+    const seasons = show.seasons || [];
+    const first = seasons[0] ? seasons[0].seasonNumber : 1;
+    const target = (season != null && seasons.some((s) => s.seasonNumber === season))
+      ? season : first;
+    this._selectSeason(target, true); // garde selectedEp (reprise)
     this.isOpen = true;
     this.root.classList.add('open');
     reveal(this.root, { selector: '.sp-seasons, .sp-actions, .crt-header' });
@@ -118,9 +124,11 @@ export class SeriesPopup extends EventEmitter {
     ).join('');
   }
 
-  async _selectSeason(n) {
+  async _selectSeason(n, keepEp = false) {
     this.season = n;
-    this.selectedEp = null;
+    // Changement manuel de saison → on repart du 1er épisode ; à l'ouverture en
+    // reprise (keepEp), on conserve l'épisode pré-sélectionné s'il existe.
+    if (!keepEp) this.selectedEp = null;
     for (const b of this.seasonsEl.querySelectorAll('.sp-season')) {
       b.classList.toggle('is-active', Number(b.dataset.season) === n);
     }
@@ -178,6 +186,13 @@ export class SeriesPopup extends EventEmitter {
     // Conserve la sélection si l'épisode existe encore, sinon prend le premier.
     const keep = eps.some((e) => e.ep === this.selectedEp);
     this._selectEpisode(keep ? this.selectedEp : eps[0].ep);
+    // À l'ouverture en reprise, amène l'épisode pré-sélectionné dans la vue (une
+    // seule fois : les rafraîchissements de statut ne doivent pas re-scroller).
+    if (this._scrollToSelected) {
+      this._scrollToSelected = false;
+      const active = this.episodesEl.querySelector('.sp-ep.is-active');
+      if (active) active.scrollIntoView({ block: 'center' });
+    }
   }
 
   _selectEpisode(ep) {

@@ -21,6 +21,7 @@ import { MovieDownloader } from './modules/MovieDownloader.js';
 import { MovieAdvisor } from './modules/MovieAdvisor.js';
 import { SeriesPopup } from './modules/SeriesPopup.js';
 import { SubtitleHud } from './modules/SubtitleHud.js';
+import { NextEpisodeHud } from './modules/NextEpisodeHud.js';
 import { startRetroClock } from './modules/RetroClock.js';
 import { startWeather } from './modules/Weather.js';
 import { VolumeOverlay } from './modules/VolumeOverlay.js';
@@ -47,6 +48,7 @@ const app = {
   movieAdvisor: null,
   seriesPopup: null,
   subtitleHud: null,
+  nextEpisodeHud: null,
   volumeOverlay: null,
   weatherPopup: null,
 };
@@ -89,6 +91,7 @@ async function bootstrap() {
     app.movieAdvisor = new MovieAdvisor(apiClient).init();
     app.seriesPopup = new SeriesPopup(apiClient).init();
     app.subtitleHud = new SubtitleHud().init();
+    app.nextEpisodeHud = new NextEpisodeHud().init();
     app.volumeOverlay = new VolumeOverlay().init();
     app.weatherPopup = new WeatherPopup().init();
     startRetroCursor(); // curseur rétro : image pixel suivant la souris (natif masqué)
@@ -141,9 +144,11 @@ window.addEventListener('mousemove', (e) => {
   lastMouse.x = e.clientX;
   lastMouse.y = e.clientY;
   // Souris bougée pendant la lecture → réveille le HUD de recalage des
-  // sous-titres (il se rendort tout seul après quelques secondes).
-  if (app.subtitleHud && state.isMovieMode && !anyMovieOverlayOpen()) {
-    app.subtitleHud.wake();
+  // sous-titres et, pour un épisode vu, le HUD « épisode suivant ». Ils se
+  // rendorment tout seuls après quelques secondes.
+  if (state.isMovieMode && !anyMovieOverlayOpen()) {
+    if (app.subtitleHud) app.subtitleHud.wake();
+    if (app.nextEpisodeHud) app.nextEpisodeHud.wake();
   }
 }, { passive: true });
 
@@ -444,15 +449,25 @@ function attachMovieHandlers() {
     mod.on('nav-advisor', goAdvisor);
   }
 
+  // Ouvre la popup en pré-sélectionnant la saison/épisode où l'on s'est arrêté
+  // (dernier épisode vu), à défaut la 1re saison.
+  const openSeriesPopup = (show, opts) => {
+    const at = opts || (() => {
+      const last = app.movieLibrary.lastWatchedEpisode(show.id);
+      return last ? { season: last.season, episode: last.episode } : {};
+    })();
+    seriesPopup.open(show, at);
+  };
+
   // Volet d'info d'une série → popup saisons/épisodes (par-dessus la bibliothèque).
-  browser.on('open-series', (show) => seriesPopup.open(show));
+  browser.on('open-series', (show) => openSeriesPopup(show));
 
   // Choix d'une série dans la recherche → l'enregistrer puis ouvrir la popup.
   downloader.on('add-series', async (movie) => {
     try {
       const res = await apiClient.addSeries(movie.tmdbId);
       downloader.close();
-      if (res && res.show) seriesPopup.open(res.show);
+      if (res && res.show) openSeriesPopup(res.show);
     } catch (err) {
       console.warn('addSeries failed:', err);
     }
@@ -477,6 +492,41 @@ function attachMovieHandlers() {
   };
   seriesPopup.on('play-episode', playEpisode);
   browser.on('play-episode', playEpisode);
+
+  // --- HUD « épisode suivant » (bas de l'image, pour les épisodes de série) ---
+  const neHud = app.nextEpisodeHud;
+  const pad2 = (n) => String(n).padStart(2, '0');
+  // À chaque (é)chargement de film : dit au HUD si c'est un épisode et si un
+  // suivant (dans la file de lecture) est prêt.
+  pm.on('movieLoaded', ({ entry }) => {
+    const isEp = entry && entry.type === 'episode';
+    const next = isEp ? pm.movieQueue[pm.movieIndex + 1] : null;
+    const hasNext = !!(next && next.type === 'episode' && next.showId === entry.showId);
+    neHud.setContext({
+      isEpisode: isEp,
+      hasNext,
+      label: hasNext ? `S${pad2(next.season)}E${pad2(next.episode)}` : '',
+    });
+    neHud.setWatched(false); // nouvel épisode : pas encore vu
+    neHud.setPaused(false);
+  });
+  pm.on('movieStopped', () => { neHud.setContext({ isEpisode: false }); neHud.setPaused(false); });
+  // « ▶ Next » → épisode suivant de la file ; « ☰ Episodes » → liste de la saison.
+  neHud.on('next', () => {
+    controls.hide();
+    pm.playNextMovie();
+    document.documentElement.requestFullscreen().catch(() => {});
+  });
+  neHud.on('episodes', () => {
+    const e = pm.currentEntry;
+    if (!e || e.type !== 'episode') return;
+    const show = app.movieLibrary.get(e.showId);
+    pm.stopMovie(false);
+    controls.hide();
+    hud.hide();
+    neHud.hide();
+    if (show) openSeriesPopup(show, { season: e.season, episode: e.episode });
+  });
 
   // SEARCH sur une reco → l'écran de recherche torrent existant (titre seul).
   advisor.on('search-movie', ({ query, kind }) => {
@@ -591,6 +641,8 @@ function attachMovieHandlers() {
   // À la pause, on passe la progression + le temps pour remplir l'en-tête.
   const video = document.getElementById('movie-player');
   const ratioOf = () => (video.duration ? video.currentTime / video.duration : 0);
+  // Seuil « vu » identique à MovieLibrary (débloque le HUD épisode suivant).
+  const WATCHED_RATIO = 0.92;
   if (video) {
     video.addEventListener('pause', () => {
       if (state.isMovieMode && !video.ended) {
@@ -598,13 +650,22 @@ function attachMovieHandlers() {
         controls.setMovieTitle(pm.currentEntry ? pm.currentEntry.title : '');
         controls.show(ratioOf(), video.currentTime, video.duration);
         hud.hide(); // l'overlay de pause recouvre l'image
+        neHud.setPaused(true); // le bouton « suivant/épisodes » fait partie de la pause
       }
     });
-    video.addEventListener('play', () => controls.hide());
+    video.addEventListener('play', () => { controls.hide(); neHud.setPaused(false); });
     video.addEventListener('ended', () => {
       controls.setMovieTitle(pm.currentEntry ? pm.currentEntry.title : '');
       controls.show(1, video.duration, video.duration);
       hud.hide();
+      neHud.setWatched(true);
+      neHud.setPaused(true); // écran de fin : proposer l'enchaînement
+    });
+    // Avancement → bascule « vu » dès le seuil (fait surgir le HUD au mouvement).
+    video.addEventListener('timeupdate', () => {
+      if (state.isMovieMode && video.duration) {
+        neHud.setWatched(video.currentTime >= WATCHED_RATIO * video.duration);
+      }
     });
   }
 }

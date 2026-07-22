@@ -233,6 +233,7 @@ body {
 #virtual-keyboard,
 #movie-controls,
 #subtitle-hud,
+#next-ep-hud,
 #volume-osd {
   font-family: var(--crt-mono);
   color: var(--crt-text);
@@ -547,7 +548,7 @@ body {
 #series-popup .sp-episodes {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: 0.5vh var(--crt-safe-x);
+  padding: 0.5vh 0.9vh 0.5vh var(--crt-safe-x);
 }
 #series-popup .sp-ep {
   --cur: hand;
@@ -1003,6 +1004,29 @@ body {
 }
 
 #subtitle-hud.open { display: flex; }
+
+/* HUD « épisode suivant » : bas-centre de l'image. z-index au-dessus de l'écran
+   de pause (#movie-controls, 30) pour rester cliquable pendant la pause. */
+#next-ep-hud {
+  position: absolute;
+  z-index: 45;
+  left: 50%;
+  bottom: 11vh; /* au-dessus du pied de l'écran de pause, dégagé en lecture */
+  transform: translateX(-50%);
+  display: none;
+}
+#next-ep-hud.open { display: block; }
+
+#next-ep-hud .ne-btn {
+  --cur: hand;
+  font-size: 3vw;
+  font-weight: bold;
+  padding: 1.6vh 3vw;
+  background-color: var(--crt-accent);
+  color: var(--crt-accent-ink);
+  border-color: var(--crt-accent);
+  text-shadow: none;
+}
 
 #subtitle-hud .sh-label {
   font-size: 2.5vw;

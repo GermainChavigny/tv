@@ -130,6 +130,37 @@ export class MovieLibrary extends EventEmitter {
       .filter((e) => e.type === 'episode' && e.showId === showId && e.status === 'ready').length;
   }
 
+  /** Épisodes PRÊTS d'une série, ordonnés (saison puis numéro). */
+  readyEpisodes(showId) {
+    return Object.values(this.entries)
+      .filter((e) => e.type === 'episode' && e.showId === showId && e.status === 'ready')
+      .sort((a, b) => (a.season - b.season) || (a.episode - b.episode));
+  }
+
+  /** Premier épisode prêt strictement APRÈS (season, episode), ou null. */
+  nextReadyEpisode(showId, season, episode) {
+    return this.readyEpisodes(showId).find(
+      (e) => e.season > season || (e.season === season && e.episode > episode)
+    ) || null;
+  }
+
+  /**
+   * Dernier épisode VU d'une série (le plus récemment lu parmi les épisodes
+   * considérés comme vus), ou null. Sert à pré-sélectionner la saison/épisode
+   * où l'on s'est arrêté à l'ouverture de la liste.
+   */
+  lastWatchedEpisode(showId) {
+    let best = null;
+    for (const e of Object.values(this.entries)) {
+      if (e.type === 'episode' && e.showId === showId && e.status === 'ready'
+          && this.isWatched(e) && (e.lastPlayedAt || 0) > 0
+          && (!best || e.lastPlayedAt > best.lastPlayedAt)) {
+        best = e;
+      }
+    }
+    return best;
+  }
+
   /** Dernier épisode LANCÉ d'une série (le plus récent lastPlayedAt), ou null. */
   lastPlayedEpisode(showId) {
     let best = null;
